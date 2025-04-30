@@ -28,14 +28,6 @@ copyright_checker(
     visibility = ["//visibility:public"],
 )
 
-filegroup(
-    name = "cargo_lock",
-    srcs = [
-        "src/kvs_rust/Cargo.lock",
-    ],
-    visibility = ["//visibility:public"],
-)
-
 dash_license_checker(
     src = ":cargo_lock",
     file_type = "",  # let it auto-detect based on project_config
