@@ -35,12 +35,13 @@ jobs:
 
       - name: Build documentation
         run: |
+          cd src/kvs_rust
           cargo doc --lib --no-deps --all
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./target/doc
+          path: ./src/kvs_rust/target/doc
 
       - name: Setup Pages
         id: pages

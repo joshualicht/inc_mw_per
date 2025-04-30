@@ -31,7 +31,7 @@ copyright_checker(
 filegroup(
     name = "cargo_lock",
     srcs = [
-        "Cargo.lock",
+        "src/kvs_rust/Cargo.lock",
     ],
     visibility = ["//visibility:public"],
 )
