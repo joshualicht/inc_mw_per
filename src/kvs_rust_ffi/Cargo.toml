@@ -1,0 +1,11 @@
+[package]
+name = "rust-kvs-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rust-kvs = { path = "../kvs_rust" }
+
+[lib]
+name = "rust_kvs_ffi"
+path = "src/lib.rs"
