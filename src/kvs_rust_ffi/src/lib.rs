@@ -15,33 +15,37 @@
 //!
 //! This crate provides FFI access to the Key-Value Storage (KVS) API and its implementation.
 //!
+/// This 
 
 #![allow(unsafe_code)] //FFI
+
+use std::ffi::c_void;
 use rust_kvs::*;
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FFIErrorCode {
-    Ok = 0,
-    UnmappedError = -1,
-    FileNotFound = -2,
-    KvsFileReadError = -3,
-    KvsHashFileReadError = -4,
-    JsonParserError = -5,
-    JsonGeneratorError = -6,
-    PhysicalStorageFailure = -7,
-    IntegrityCorrupted = -8,
-    ValidationFailed = -9,
-    EncryptionFailed = -10,
-    ResourceBusy = -11,
-    OutOfStorageSpace = -12,
-    QuotaExceeded = -13,
-    AuthenticationFailed = -14,
-    KeyNotFound = -15,
-    SerializationFailed = -16,
-    InvalidSnapshotId = -17,
-    ConversionFailed = -18,
-    MutexLockFailed = -19,
+    Ok = 100,
+
+    UnmappedError = 0,
+    FileNotFound = 1,
+    KvsFileReadError = 2,
+    KvsHashFileReadError = 3,
+    JsonParserError = 4,
+    JsonGeneratorError = 5,
+    PhysicalStorageFailure = 6,
+    IntegrityCorrupted = 7,
+    ValidationFailed = 8,
+    EncryptionFailed = 9,
+    ResourceBusy = 10,
+    OutOfStorageSpace = 11,
+    QuotaExceeded = 12,
+    AuthenticationFailed = 13,
+    KeyNotFound = 14,
+    SerializationFailed = 15,
+    InvalidSnapshotId = 16,
+    ConversionFailed = 17,
+    MutexLockFailed = 18,
 }
 
 impl From<rust_kvs::ErrorCode> for FFIErrorCode {
@@ -70,8 +74,62 @@ impl From<rust_kvs::ErrorCode> for FFIErrorCode {
         }
     }
 }
+/// FFI function to drop the KVS instance.
+#[no_mangle]
+pub extern "C" fn drop_kvs(handle: *mut c_void) {
+    if !handle.is_null() {
+        unsafe {
+            let _ = Box::from_raw(handle as *mut Kvs); //Drop the Kvs instance
+        }
+    }
+}
 
-/// FFI function to flush the KVS on exit. (Currently disabled due to lib.rs flush_on_exit owenership issue -> refer to written findings)
+/// FFI function to open the KVS.
+#[no_mangle]
+pub extern "C" fn open_ffi(
+    instance_id: usize,
+    need_defaults: u32,
+    need_kvs: u32,
+    out_handle: *mut *mut c_void,
+) -> FFIErrorCode {
+    if out_handle.is_null() {
+        return FFIErrorCode::UnmappedError;
+    }
+
+    match Kvs::open(
+        InstanceId::new(instance_id),
+        if need_defaults == 1{
+            OpenNeedDefaults::Required
+        } else {
+            OpenNeedDefaults::Optional
+        },
+        if need_kvs == 1 {
+            OpenNeedKvs::Required
+        } else {
+            OpenNeedKvs::Optional
+        },
+    ) {
+        Ok(kvs) => {
+            let boxed = Box::new(kvs);
+            unsafe { *out_handle = Box::into_raw(boxed) as *mut c_void; }
+            FFIErrorCode::Ok
+        }
+        Err(e) => e.into(),
+    }
+}
+
+
+/// FFI function to reset the KVS.
+#[no_mangle]
+pub extern "C" fn reset_ffi(handle: *mut c_void) -> FFIErrorCode {
+    if handle.is_null() {
+        return FFIErrorCode::UnmappedError;
+    }
+    let kvs: &mut Kvs = unsafe { &mut *(handle as *mut Kvs) };
+    kvs.reset().map(|_| FFIErrorCode::Ok).unwrap_or_else(|e| e.into())
+}
+
+// FFI function to flush the KVS on exit. (Currently disabled due to lib.rs flush_on_exit owenership issue -> refer to written findings)
 //#[no_mangle]
 //pub extern "C" fn flush_on_exit_ffi(kvs_ptr: *mut Kvs, flush_on_exit: bool) {
 //    if kvs_ptr.is_null() {
@@ -82,15 +140,3 @@ impl From<rust_kvs::ErrorCode> for FFIErrorCode {
 //        (*kvs_ptr).flush_on_exit(flush_on_exit);
 //    }
 //}
-
-/// FFI function to reset the KVS.
-#[no_mangle]
-pub extern "C" fn reset_ffi(kvs_ptr: *mut Kvs) -> FFIErrorCode {
-    if kvs_ptr.is_null() {
-        return FFIErrorCode::UnmappedError;
-    }
-
-    unsafe {
-        (*kvs_ptr).reset().map(|_| FFIErrorCode::Ok).unwrap_or_else(|e| e.into())
-    }
-}

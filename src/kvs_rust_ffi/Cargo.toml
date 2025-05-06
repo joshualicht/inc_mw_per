@@ -9,3 +9,4 @@ rust-kvs = { path = "../kvs_rust" }
 [lib]
 name = "rust_kvs_ffi"
 path = "src/lib.rs"
+crate-type = ["staticlib"]
