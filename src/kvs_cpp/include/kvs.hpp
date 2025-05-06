@@ -249,6 +249,14 @@ class Kvs {
 
         ~Kvs();
 
+        // Deleted copy constructor and assignment operator to prevent copying
+        Kvs(const Kvs&) = delete;
+        Kvs& operator=(const Kvs&) = delete;
+
+        // Default move constructor and assignment operator
+        Kvs(Kvs&& other) noexcept;
+        Kvs& operator=(Kvs&& other) noexcept;
+
         /**
          * @brief Opens the key-value store with the specified instance ID and flags.
          * 
@@ -453,7 +461,10 @@ class Kvs {
         const std::string_view get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
 
     private:
-        static void* kvshandle;
+        // Private constructor to prevent direct instantiation
+        Kvs() = default;
+        
+        void* kvshandle = nullptr;
     /* // Not used in this example, but could be useful as its part of the original rust api.
         // Internal storage and configuration details.
         std::mutex kvs_mutex;

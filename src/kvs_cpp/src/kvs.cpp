@@ -5,7 +5,22 @@
 #include "kvs_rust_ffi.h"
 
 using namespace std;
-void* Kvs::kvshandle = nullptr;
+
+Kvs::Kvs(Kvs&& other) noexcept
+  : kvshandle(other.kvshandle)
+{
+    other.kvshandle = nullptr;
+}
+Kvs& Kvs::operator=(Kvs&& other) noexcept {
+    if (this != &other) {
+        if (kvshandle) {
+            drop_kvs(kvshandle);
+        }
+        kvshandle = other.kvshandle;
+        other.kvshandle = nullptr;
+    }
+    return *this;
+}
 
 Kvs::~Kvs() {
     if (kvshandle != nullptr) {
@@ -42,8 +57,13 @@ void Kvs::set_flush_on_exit(bool flush) {
 
 // Reset KVS to initial state
 Result<void> Kvs::reset() {
-    // Empty implementation
-    return {}; 
+    FFIErrorCode code = reset_ffi(kvshandle);
+    if (code != FFIErrorCode::Ok) {
+        return std::unexpected(static_cast<ErrorCode>(code));
+    }
+    else {
+        return {};
+    }
 }
 
 // Retrieve all keys in the KVS
