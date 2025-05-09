@@ -215,8 +215,7 @@ pub extern "C" fn free_key_id_ffi(ptr: *mut c_char) {
 pub extern "C" fn key_exists_ffi(
     kvshandle: *mut c_void,
     key: *const c_char,
-    key_exists: *mut u8,
-) -> FFIErrorCode {
+    key_exists: *mut u8,) -> FFIErrorCode {
     if kvshandle.is_null(){
         return FFIErrorCode::InvalidKvsHandle;
     } else if key.is_null() || key_exists.is_null() {
@@ -232,6 +231,7 @@ pub extern "C" fn key_exists_ffi(
         Err(e) => e.into(),
     }
 }
+
 /// FFI function to get a value from the KVS.
 //  get_value_ffi is not implemented yet
 

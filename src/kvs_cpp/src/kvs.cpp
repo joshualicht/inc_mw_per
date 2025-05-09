@@ -6,6 +6,7 @@
 
 using namespace std;
 
+// === Implementation of Key class ===
 
 Key::Key() = default;
 
@@ -38,8 +39,11 @@ void Key::init_value(KvsValue&& value) {
     keyvalue = std::move(value);
 }
 
-const char* Key::get_key() const {
-    return id_ptr.value_or(nullptr);
+std::string_view Key::get_key() const {
+    if (id_ptr.has_value()) {
+        return std::string_view(id_ptr.value(), id_len.value_or(0));
+    }
+    return {}; 
 }
 
 size_t Key::get_length() const {
@@ -63,7 +67,7 @@ Key::~Key() {
 }
 
 
-
+// === Implementation of KVS class ===
 
 Kvs::Kvs(Kvs&& other) noexcept
   : kvshandle(other.kvshandle)
@@ -126,10 +130,6 @@ Result<void> Kvs::reset() {
 }
 
 // Retrieve all keys in the KVS
-// Result<vector<string_view>> Kvs::get_all_keys(){
-
-// }
-
 Result<vector<Key>> Kvs::get_all_keys() {
 
     const char** keys_ptr = nullptr;
@@ -152,92 +152,104 @@ Result<vector<Key>> Kvs::get_all_keys() {
     return result;
 }
 
-
-// Result<vector<string_view>> Kvs::get_all_keys() {
-//     const char** keys_ptr = nullptr;
-//     size_t len = 0;
-//     FFIErrorCode code = get_all_keys_ffi(kvshandle, &keys_ptr, &len);
-//     if (code != FFIErrorCode::Ok) {
-//         return unexpected(static_cast<ErrorCode>(code));
-//     }
-
-//     vector<string_view> result;
-//     result.reserve(len);
-//     for (size_t i = 0; i < len; ++i) {
-//         result.emplace_back(keys_ptr[i]);
-//     }
-//     //all_keys_dealloc_ffi(const_cast<const char**>(keys_ptr), len);
-//     return result;
-// }
-
 // Check if a key exists
-Result<bool> Kvs::key_exists(const std::string_view key) {
-    // Empty implementation
-    return false; 
+Result<bool> Kvs::key_exists(const string_view key) {
+    uint8_t exists = 0;
+    FFIErrorCode code = key_exists_ffi(kvshandle, key.data(), &exists);
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    return static_cast<bool>(exists);
 }
 
 // Retrieve the value associated with a key
 Result<KvsValue> Kvs::get_value(const std::string_view key) {
     // Empty implementation
+    //TODO implementation + refactor to key class
     return KvsValue{nullptr};
 }
 
 // Retrieve the default value associated with a key
 Result<KvsValue> Kvs::get_default_value(const std::string_view key) {
     // Empty implementation
+    //TODO
     return KvsValue{nullptr}; 
 }
 
 // Check if a key has a default value
-Result<bool> Kvs::has_default_value(const std::string_view key) {
-    // Empty implementation
-    return false; 
+Result<bool> Kvs::is_value_default(const std::string_view key) {
+    uint8_t is_default = 0;
+    FFIErrorCode code = is_value_default_ffi(kvshandle, key.data(), &is_default);
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    return static_cast<bool>(is_default);
 }
 
 // Set the value for a key
 Result<bool> Kvs::set_value(const std::string_view key, const KvsValue& value) {
     // Empty implementation
+    //TODO
     return true;
 }
 
 // Remove a key-value pair
-Result<void> Kvs::remove_key(const std::string_view key) {
-    // Empty implementation
-    return {}; 
+Result<void> Kvs::remove_key(const string_view key) {
+    FFIErrorCode code = remove_key_ffi(kvshandle, key.data());
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    return {};
 }
 
 // Flush the key-value store
 Result<void> Kvs::flush() {
-    // Empty implementation
-    return {}; 
+    FFIErrorCode code = flush_ffi(kvshandle);
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    return {};
 }
 
 // Retrieve the snapshot count
 size_t Kvs::snapshot_count() const {
-    // Empty implementation
-    return 0; 
+    size_t count = 0;
+    FFIErrorCode code = snapshot_count_ffi(kvshandle, &count);
+    if (code != FFIErrorCode::Ok) {
+        return 0;
+    }
+    return count;
 }
 
 // Retrieve the max snapshot count
 size_t Kvs::max_snapshot_count() const {
-    // Empty implementation
-    return 10;
+    size_t max = 0;
+    FFIErrorCode code = snapshot_max_count_ffi(&max);
+    if (code != FFIErrorCode::Ok) {
+        return 0;
+    }
+    return max;
 }
 
 // Restore the key-value store from a snapshot
 Result<void> Kvs::snapshot_restore(const SnapshotId& snapshot_id) {
-    // Empty implementation
-    return {}; 
+    FFIErrorCode code = snapshot_restore_ffi(kvshandle, snapshot_id.id);
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    return {};
 }
 
 // Get the filename for a snapshot
 const std::string_view Kvs::get_kvs_filename(const SnapshotId& snapshot_id) const {
     // Empty implementation
+    // TODO
     return ""; // Return an empty string as a placeholder
 }
 
 // Get the hash filename for a snapshot
 const std::string_view Kvs::get_kvs_hash_filename(const SnapshotId& snapshot_id) const {
     // Empty implementation
+    // TODO
     return "";
 }

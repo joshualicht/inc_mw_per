@@ -8,7 +8,6 @@ enum class FFIErrorCode : int32_t {
   Ok = 100,
   InvalidKvsHandle = 101,
   InvalidArgument = 102,
-  BufferTooSmall = 103,
   UnmappedError = 0,
   FileNotFound = 1,
   KvsFileReadError = 2,

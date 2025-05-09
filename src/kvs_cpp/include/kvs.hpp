@@ -207,7 +207,7 @@ class Key {
     
         void set_key(const char* string, size_t len);
         void init_value(KvsValue&& value);
-        const char* get_key() const;
+        std::string_view get_key() const;
         size_t get_length() const;
         const KvsValue* get_value() const;
     
@@ -439,7 +439,7 @@ class Kvs {
          *         - `false` if the key does not have a default value.
          *         - An `ErrorCode` if an error occurs during the operation.
          */
-        Result<bool> has_default_value(const std::string_view key);
+        Result<bool> is_value_default(const std::string_view key);
 
 
 
