@@ -14,22 +14,36 @@
 * \brief Example Usage
 *
 * \code
-* #include <iostream>
-* #include "Kvs.hpp"
+*#include <iostream>
+*#include "Kvs.hpp"
 *
-* int main() {
-*    
-*     auto result = Kvs::open(InstanceId(1), OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-* 
-*     if (result.has_value()) {
-*         std::cout << "KVS opened successfully!" << std::endl;
-*     } else {
-*         std::cerr << "Failed to open KVS: "
-*                   << static_cast<int>(result.error()) << std::endl;
-*     }
-* 
-*     return 0;
-* }
+*int main() {
+*    auto result = Kvs::open(InstanceId(0), OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+*
+*    if (result.has_value()) {
+*        std::cout << "KVS opened successfully!" << std::endl;
+*
+*
+*        auto keys_result = result->get_all_keys();
+*        if (keys_result.has_value()) {
+*            std::cout << "Keys in KVS: ";
+*
+*            for (const auto& key : keys_result.value()) {
+*                std::cout << key.get_key() << " ";
+*            }
+*            std::cout << std::endl;
+*
+*        } else {
+*            std::cerr << "Failed to get keys: "
+*                      << static_cast<int>(keys_result.error()) << std::endl;
+*        }
+*    } else {
+*        std::cerr << "Failed to open KVS: "
+*                  << static_cast<int>(result.error()) << std::endl;
+*    }
+*
+*    return 0;
+*}
 * \endcode
 */
 
@@ -38,8 +52,15 @@
 #include <mutex>
 #include <atomic>
 #include <variant>
+#include <utility>
 #include <vector>
 #include <expected>
+#include <stdexcept>
+#include <optional>
+
+#define KVS_MAX_SNAPSHOTS 3
+#define KVS_MAX_KEYSIZE 1024
+
 
 
 struct InstanceId {
@@ -141,6 +162,59 @@ private:
     // The type of the value
     Type type;
 };
+
+/**
+ * @class Key
+ * @brief Represents a flexible container for either a key identifier (name) or an associated value.
+ *
+ * The Key class is designed for interoperation between C++ and Rust. It holds either:
+ * - A pointer to a key name (C string allocated by Rust), or
+ * - A value associated with a key (KvsValue).
+ *
+ * Ownership and memory management are handled carefully:
+ * - The key pointer (`id_ptr`) is set from Rust and must not be freed manually in C++.
+ * - The destructor automatically invokes a Rust deallocation function if necessary.
+ *
+ * ## Usage Modes:
+ * - **Key Identifier Mode:** `id_ptr` and `id_len` are set using `set_key(...)`.
+ * - **Value Mode:** A `KvsValue` is initialized using `init_value(...)`.
+ *
+ * ## Memory Safety:
+ * - The class disables copy construction and assignment to ensure unique ownership.
+ * - Move semantics are supported to safely transfer ownership.
+ * - The `dealloc()` method (called in destructor) frees any dynamically allocated Rust memory.
+ *
+ * ## Public Methods:
+ * - `void set_key(const char* string, size_t len)`: Sets the key identifier.
+ * - `void init_value(KvsValue&& value)`: Moves a KvsValue into this key.
+ * - `const char* get_key() const`: Returns the key string pointer (or nullptr).
+ * - `size_t get_length() const`: Returns the length of the key string.
+ * - `const KvsValue* get_value() const`: Returns a pointer to the value (or nullptr).
+ */
+class Key {
+    private:
+        std::optional<const char*> id_ptr;
+        std::optional<size_t> id_len;
+        std::optional<KvsValue> keyvalue;
+    
+    public:
+        Key();
+        Key(const Key&) = delete;
+        Key& operator=(const Key&) = delete;
+        Key(Key&& other) noexcept;
+        Key& operator=(Key&& other) noexcept;
+        ~Key();
+    
+        void set_key(const char* string, size_t len);
+        void init_value(KvsValue&& value);
+        const char* get_key() const;
+        size_t get_length() const;
+        const KvsValue* get_value() const;
+    
+    private:
+        void dealloc();
+    };
+
 
 // @brief 
 enum class ErrorCode {
@@ -248,7 +322,7 @@ class Kvs {
     public:
 
         ~Kvs();
-
+        
         // Deleted copy constructor and assignment operator to prevent copying
         Kvs(const Kvs&) = delete;
         Kvs& operator=(const Kvs&) = delete;
@@ -311,7 +385,8 @@ class Kvs {
          *         A result object containing a vector of all keys on success, 
          *         or an error code on failure.
          */
-        Result<std::vector<std::string_view>> get_all_keys();
+        // Result<std::vector<std::string_view>> get_all_keys();
+        Result<std::vector<Key>> get_all_keys();
 
 
         /**
@@ -465,6 +540,8 @@ class Kvs {
         Kvs() = default;
         
         void* kvshandle = nullptr;
+        
+
     /* // Not used in this example, but could be useful as its part of the original rust api.
         // Internal storage and configuration details.
         std::mutex kvs_mutex;
