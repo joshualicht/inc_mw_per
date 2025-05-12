@@ -29,7 +29,30 @@ enum class FFIErrorCode : int32_t {
   MutexLockFailed = 18,
 };
 
+enum class FFI_KvsValueType {
+  Number,
+  Boolean,
+  String,
+  Null,
+  Array,
+  Object,
+};
+
+struct FFI_KvsValue {
+  FFI_KvsValueType type_;
+  double number;
+  uint8_t boolean;
+  char *string;
+  FFI_KvsValue *array_ptr;
+  uintptr_t array_len;
+  const char **obj_keys;
+  FFI_KvsValue *obj_values;
+  uintptr_t obj_len;
+};
+
 extern "C" {
+
+void free_ffi_kvsvalue_rust(FFI_KvsValue *ptr);
 
 /// FFI function to drop the KVS instance.
 void drop_kvs(void *kvshandle);
@@ -58,10 +81,14 @@ FFIErrorCode key_exists_ffi(void *kvshandle, const char *key, uint8_t *key_exist
 
 /// FFI function to get a value from the KVS.
 /// FFI function to get a default value from the KVS.
+FFIErrorCode get_default_value_ffi(void *kvshandle, const char *key, FFI_KvsValue *out);
+
 /// FFI function to check if a key is default in the KVS.
 FFIErrorCode is_value_default_ffi(void *kvshandle, const char *key, uint8_t *is_default);
 
 /// FFI function to set a value.
+FFIErrorCode set_value_ffi(void *kvshandle, const char *key, const FFI_KvsValue *ffi_val);
+
 /// FFI function to remove a key from the KVS.
 FFIErrorCode remove_key_ffi(void *kvshandle, const char *key);
 

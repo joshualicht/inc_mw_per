@@ -139,6 +139,7 @@ public:
     KvsValue(double number) : value(number), type(Type::Number) {}
     KvsValue(bool boolean) : value(boolean), type(Type::Boolean) {}
     KvsValue(const std::string& str) : value(str), type(Type::String) {}
+    KvsValue(const char* str) : value(std::string(str)), type(Type::String) {}
     KvsValue(std::nullptr_t) : value(nullptr), type(Type::Null) {}
     KvsValue(const Array& array) : value(array), type(Type::Array) {}
     KvsValue(const Object& object) : value(object), type(Type::Object) {}
@@ -229,7 +230,6 @@ class Filename {
     private:
         void dealloc();
 };
-
 
 // @brief 
 enum class ErrorCode {
@@ -439,7 +439,7 @@ class Kvs {
          *         the operation is successful, or an ErrorCode indicating the error
          *         if the operation fails.
          */
-        Result<KvsValue> get_default_value(const std::string_view key);
+        Result<Key> get_default_value(const std::string_view key);
 
 
         /**

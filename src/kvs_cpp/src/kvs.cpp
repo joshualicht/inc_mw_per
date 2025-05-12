@@ -6,6 +6,129 @@
 
 using namespace std;
 
+
+// --------------------------------------------------------------------
+// Helper functions to convert between KvsValue and FFI_KvsValue
+
+static KvsValue kvsvalue_conversion_rust_to_cpp(const FFI_KvsValue& value) {
+    switch (value.type_) {
+      case FFI_KvsValueType::Number:
+        return KvsValue(value.number);
+
+      case FFI_KvsValueType::Boolean:
+        return KvsValue(static_cast<bool>(value.boolean));
+
+      case FFI_KvsValueType::String:
+        // zero-copy idea: string_view constructor
+        return KvsValue(std::string(value.string));
+
+      case FFI_KvsValueType::Null:
+        return KvsValue(nullptr);
+
+      case FFI_KvsValueType::Array: {
+        std::vector<KvsValue> arr;
+        arr.reserve(value.array_len);
+        for (size_t i = 0; i < value.array_len; ++i) {
+          arr.push_back(kvsvalue_conversion_rust_to_cpp(value.array_ptr[i]));
+        }
+        return KvsValue(arr);
+      }
+
+      case FFI_KvsValueType::Object: {
+        std::unordered_map<std::string, KvsValue> obj;
+        obj.reserve(value.obj_len);
+        for (size_t i = 0; i < value.obj_len; ++i) {
+          const char* key = value.obj_keys[i];
+          obj.emplace(
+            std::string(key),        
+            kvsvalue_conversion_rust_to_cpp(value.obj_values[i])
+          );
+        }
+        return KvsValue(obj);
+      }
+    }
+    return KvsValue(nullptr); // should never reach here
+}
+
+static void make_ffi_from_cpp(const KvsValue& value, FFI_KvsValue* out) {
+    switch (value.getType()) {
+        case KvsValue::Type::Number:
+            out->type_     = FFI_KvsValueType::Number;
+            out->number    = std::get<double>(value.getValue());
+            break;
+
+        case KvsValue::Type::Boolean:
+            out->type_     = FFI_KvsValueType::Boolean;
+            out->boolean   = static_cast<uint8_t>(std::get<bool>(value.getValue()));
+            break;
+
+        case KvsValue::Type::String: {
+            out->type_     = FFI_KvsValueType::String;
+            auto& s        = std::get<std::string>(value.getValue());
+            // strdup allocates with malloc
+            out->string    = strdup(s.c_str());
+            break;
+        }
+
+        case KvsValue::Type::Null:
+            out->type_     = FFI_KvsValueType::Null;
+            break;
+
+        case KvsValue::Type::Array: {
+            out->type_     = FFI_KvsValueType::Array;
+            auto& arr      = std::get<KvsValue::Array>(value.getValue());
+            size_t len     = arr.size();
+            // malloc
+            out->array_ptr = (FFI_KvsValue*)std::malloc(len * sizeof(FFI_KvsValue));
+            out->array_len = len;
+            for (size_t i = 0; i < len; ++i) {
+                make_ffi_from_cpp(arr[i], &out->array_ptr[i]);
+            }
+            break;
+        }
+
+        case KvsValue::Type::Object: {
+            out->type_     = FFI_KvsValueType::Object;
+            auto& obj      = std::get<KvsValue::Object>(value.getValue());
+            size_t len     = obj.size();
+            out->obj_keys  = (const char**)std::malloc(len * sizeof(const char*));
+            out->obj_values  = (FFI_KvsValue*)std::malloc(len * sizeof(FFI_KvsValue));
+            out->obj_len   = len;
+            size_t idx = 0;
+            for (auto& [k, vv] : obj) {
+                out->obj_keys[idx] = strdup(k.c_str());
+                make_ffi_from_cpp(vv, &out->obj_values[idx]);
+                ++idx;
+            }
+            break;
+        }
+    }
+}
+
+static void free_ffi_kvsvalue_cpp(FFI_KvsValue* value) {
+    switch (value->type_) {
+      case FFI_KvsValueType::String:
+        std::free((void*)value->string);
+        break;
+      case FFI_KvsValueType::Array:
+        for (size_t i = 0; i < value->array_len; ++i) {
+          free_ffi_kvsvalue_cpp(&value->array_ptr[i]);
+        }
+        std::free(value->array_ptr);
+        break;
+      case FFI_KvsValueType::Object:
+        for (size_t i = 0; i < value->obj_len; ++i) {
+          std::free((void*)value->obj_keys[i]);
+          free_ffi_kvsvalue_cpp(&value->obj_values[i]);
+        }
+        std::free(value->obj_keys);
+        std::free(value->obj_values);
+        break;
+      default:
+        break;
+    }
+}
+
 // === Implementation of Key class ===
 
 Key::Key() = default;
@@ -211,10 +334,33 @@ Result<KvsValue> Kvs::get_value(const std::string_view key) {
 }
 
 // Retrieve the default value associated with a key
-Result<KvsValue> Kvs::get_default_value(const std::string_view key) {
-    // Empty implementation
-    //TODO
-    return KvsValue{nullptr}; 
+//Result<Key> Kvs::get_default_value(const std::string_view key) {
+//    // Empty implementation
+//    //TODO
+//    Key k;
+//
+//
+//    return k; 
+//}
+Result<Key> Kvs::get_default_value(const std::string_view key) {
+    FFI_KvsValue value;
+    FFIErrorCode code = get_default_value_ffi(
+        kvshandle,
+        key.data(),
+        &value
+    );
+    if (code != FFIErrorCode::Ok) {
+        return std::unexpected(static_cast<ErrorCode>(code));
+    }
+
+    
+    KvsValue cpp = kvsvalue_conversion_rust_to_cpp(value);
+
+    Key k;
+    k.init_value(std::move(cpp));
+    free_ffi_kvsvalue_rust(&value);
+
+    return k;
 }
 
 // Check if a key has a default value
@@ -228,9 +374,22 @@ Result<bool> Kvs::is_value_default(const std::string_view key) {
 }
 
 // Set the value for a key
-Result<bool> Kvs::set_value(const std::string_view key, const KvsValue& value) {
-    // Empty implementation
-    //TODO
+Result<bool> Kvs::set_value(const std::string_view key,
+                            const KvsValue& value) {
+    FFI_KvsValue ffi;
+    make_ffi_from_cpp(value, &ffi);
+
+    FFIErrorCode code = set_value_ffi(
+        kvshandle,
+        key.data(),
+        &ffi
+    );
+
+    free_ffi_kvsvalue_cpp(&ffi);
+
+    if (code != FFIErrorCode::Ok) {
+        return std::unexpected(static_cast<ErrorCode>(code));
+    }
     return true;
 }
 
