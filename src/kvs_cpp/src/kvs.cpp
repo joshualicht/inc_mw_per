@@ -39,15 +39,11 @@ void Key::init_value(KvsValue&& value) {
     keyvalue = std::move(value);
 }
 
-std::string_view Key::get_key() const {
+std::string_view Key::get_id() const {
     if (id_ptr.has_value()) {
         return std::string_view(id_ptr.value(), id_len.value_or(0));
     }
     return {}; 
-}
-
-size_t Key::get_length() const {
-    return id_len.value_or(0);
 }
 
 const KvsValue* Key::get_value() const {
@@ -56,7 +52,7 @@ const KvsValue* Key::get_value() const {
 
 void Key::dealloc() {
     if (id_ptr.has_value()) {
-        free_key_id_ffi(const_cast<char*>(id_ptr.value()));
+        free_rust_cstring(const_cast<char*>(id_ptr.value()));
         id_ptr = std::nullopt;
         id_len = std::nullopt;
     }
@@ -65,6 +61,51 @@ void Key::dealloc() {
 Key::~Key() {
     dealloc();
 }
+
+
+// === Implementation of Filename class ===
+
+Filename::Filename() = default;
+
+Filename::Filename(Filename&& other) noexcept
+    : id_ptr(std::exchange(other.id_ptr, std::nullopt)),
+      id_len(std::exchange(other.id_len, std::nullopt)) {}
+
+Filename& Filename::operator=(Filename&& other) noexcept {
+    if (this != &other) {
+        id_ptr = std::exchange(other.id_ptr, std::nullopt);
+        id_len = std::exchange(other.id_len, std::nullopt);
+    }
+    return *this;
+}
+
+void Filename::set(const char* string, size_t len) {
+    if (id_ptr.has_value()) {
+        throw std::runtime_error("Filename already initialized");
+    }
+    id_ptr = string;
+    id_len = len;
+}
+
+std::string_view Filename::get() const {
+    if (id_ptr.has_value()) {
+        return std::string_view(id_ptr.value(), id_len.value_or(0));
+    }
+    return {}; 
+}
+
+void Filename::dealloc() {
+    if (id_ptr.has_value()) {
+        free_rust_cstring(const_cast<char*>(id_ptr.value()));
+        id_ptr = std::nullopt;
+        id_len = std::nullopt;
+    }
+}
+
+Filename::~Filename() {
+    dealloc();
+}
+
 
 
 // === Implementation of KVS class ===
@@ -241,15 +282,31 @@ Result<void> Kvs::snapshot_restore(const SnapshotId& snapshot_id) {
 }
 
 // Get the filename for a snapshot
-const std::string_view Kvs::get_kvs_filename(const SnapshotId& snapshot_id) const {
-    // Empty implementation
-    // TODO
-    return ""; // Return an empty string as a placeholder
+Result<Filename> Kvs::get_kvs_filename(const SnapshotId& snapshot_id) const {
+
+    const char*  keys_ptr = nullptr;
+    FFIErrorCode code = get_kvs_filename_ffi(kvshandle, snapshot_id.id, &keys_ptr);
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    Filename fname;
+    size_t slen = std::strlen(keys_ptr);
+    fname.set(keys_ptr, slen);
+
+    return fname;
 }
 
 // Get the hash filename for a snapshot
-const std::string_view Kvs::get_kvs_hash_filename(const SnapshotId& snapshot_id) const {
-    // Empty implementation
-    // TODO
-    return "";
+Result<Filename> Kvs::get_kvs_hash_filename(const SnapshotId& snapshot_id) const {
+
+    const char*  keys_ptr = nullptr;
+        FFIErrorCode code = get_hash_filename_ffi(kvshandle, snapshot_id.id, &keys_ptr);
+    if (code != FFIErrorCode::Ok) {
+        return unexpected(static_cast<ErrorCode>(code));
+    }
+    Filename fname;
+    size_t slen = std::strlen(keys_ptr);
+    fname.set(keys_ptr, slen);
+
+    return fname;
 }

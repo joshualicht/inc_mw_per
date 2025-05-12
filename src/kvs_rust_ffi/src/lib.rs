@@ -201,12 +201,13 @@ pub extern "C" fn free_all_keys_vec_ffi(
 
 /// FFI helper to free a single C string produced by get_all_keys_ffi.
 #[no_mangle]
-pub extern "C" fn free_key_id_ffi(ptr: *mut c_char) {
+pub extern "C" fn free_rust_cstring(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }
     unsafe {
-        drop(CString::from_raw(ptr as *mut c_char));
+        let string = CString::from_raw(ptr as *mut c_char);
+        drop(string);
     }
 }
 
@@ -324,25 +325,6 @@ pub extern "C" fn snapshot_restore_ffi(kvshandle: *mut c_void, id: usize) -> FFI
         .unwrap_or_else(Into::into)
 }
 
-/// Internal Helper Function: Function to allocate a C string and return its pointer.
-fn cstring_alloc(string: String, cstring_ptr: *mut *const c_char) {
-    let cstring = CString::new(string).map_err(|_| {
-        panic!("CString::new failed");
-    }).unwrap();
-    let ptr = cstring.into_raw();
-    unsafe {
-        *cstring_ptr = ptr;
-    }
-}
-
-/// FFI function to deallocate a C string (allocated by get_kvs_filename_ffi or get_hash_filename_ffi).
-#[no_mangle]
-pub extern "C" fn filename_dealloc_ffi(cstring: *mut c_char) {
-    if !cstring.is_null() {
-        unsafe { drop(CString::from_raw(cstring)) }
-    }
-}
-
 /// FFI function to get the kvs filename.
 #[no_mangle]
 pub extern "C" fn get_kvs_filename_ffi(
@@ -358,7 +340,12 @@ pub extern "C" fn get_kvs_filename_ffi(
     }
     let kvs = unsafe { &*(kvshandle as *mut Kvs) };
     let _filename = kvs.get_kvs_filename(SnapshotId::new(id));
-    cstring_alloc(_filename, filename);
+    let cstring = CString::new(_filename).map_err(|_| {
+        panic!("CString::new failed");}).unwrap();
+    let ptr = cstring.into_raw();
+    unsafe {
+        *filename = ptr;
+    }
     FFIErrorCode::Ok
 }
 
@@ -376,6 +363,11 @@ pub extern "C" fn get_hash_filename_ffi(
     }
     let kvs = unsafe { &*(kvshandle as *mut Kvs) };
     let _filename = kvs.get_hash_filename(SnapshotId::new(id));
-    cstring_alloc(_filename, filename);
+    let cstring = CString::new(_filename).map_err(|_| {
+        panic!("CString::new failed");}).unwrap();
+    let ptr = cstring.into_raw();
+    unsafe {
+        *filename = ptr;
+    }
     FFIErrorCode::Ok
 }

@@ -58,10 +58,6 @@
 #include <stdexcept>
 #include <optional>
 
-#define KVS_MAX_SNAPSHOTS 3
-#define KVS_MAX_KEYSIZE 1024
-
-
 
 struct InstanceId {
     size_t id;
@@ -207,13 +203,32 @@ class Key {
     
         void set_key(const char* string, size_t len);
         void init_value(KvsValue&& value);
-        std::string_view get_key() const;
-        size_t get_length() const;
+        std::string_view get_id() const;
         const KvsValue* get_value() const;
     
     private:
         void dealloc();
-    };
+};
+
+class Filename {
+    private:
+        std::optional<const char*> id_ptr;
+        std::optional<size_t> id_len;
+    
+    public:
+        Filename();
+        Filename(const Filename&) = delete;
+        Filename& operator=(const Filename&) = delete;
+        Filename(Filename&& other) noexcept;
+        Filename& operator=(Filename&& other) noexcept;
+        ~Filename();
+    
+        void set(const char* string, size_t len);
+        std::string_view get() const;
+    
+    private:
+        void dealloc();
+};
 
 
 // @brief 
@@ -520,7 +535,7 @@ class Kvs {
          * @param snapshot_id The identifier of the snapshot for which the filename is to be retrieved.
          * @return A string view representing the filename corresponding to the provided snapshot ID.
          */
-        const std::string_view get_kvs_filename(const SnapshotId& snapshot_id) const;
+        Result<Filename> get_kvs_filename(const SnapshotId& snapshot_id) const;
 
 
         /**
@@ -533,13 +548,15 @@ class Kvs {
          * @param snapshot_id The identifier of the snapshot for which the hash filename is requested.
          * @return A string view representing the hash filename associated with the given snapshot ID.
          */
-        const std::string_view get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
+        Result<Filename> get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
 
     private:
         // Private constructor to prevent direct instantiation
         Kvs() = default;
         
         void* kvshandle = nullptr;
+
+
         
 
     /* // Not used in this example, but could be useful as its part of the original rust api.

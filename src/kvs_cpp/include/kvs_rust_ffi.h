@@ -51,7 +51,7 @@ FFIErrorCode get_all_keys_ffi(void *kvshandle, const char ***vec_keys, uintptr_t
 void free_all_keys_vec_ffi(const char **vec_ptr, uintptr_t vec_len);
 
 /// FFI helper to free a single C string produced by get_all_keys_ffi.
-void free_key_id_ffi(char *ptr);
+void free_rust_cstring(char *ptr);
 
 /// FFI function to check if a key exists in the KVS.
 FFIErrorCode key_exists_ffi(void *kvshandle, const char *key, uint8_t *key_exists);
@@ -76,9 +76,6 @@ FFIErrorCode snapshot_max_count_ffi(uintptr_t *max);
 
 /// FFI function to restore a snapshot.
 FFIErrorCode snapshot_restore_ffi(void *kvshandle, uintptr_t id);
-
-/// FFI function to deallocate a C string (allocated by get_kvs_filename_ffi or get_hash_filename_ffi).
-void filename_dealloc_ffi(char *cstring);
 
 /// FFI function to get the kvs filename.
 FFIErrorCode get_kvs_filename_ffi(void *kvshandle, uintptr_t id, const char **filename);
