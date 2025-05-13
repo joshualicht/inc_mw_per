@@ -50,7 +50,7 @@ static KvsValue kvsvalue_conversion_rust_to_cpp(const FFI_KvsValue& value) {
     return KvsValue(nullptr); // should never reach here
 }
 
-static void make_ffi_from_cpp(const KvsValue& value, FFI_KvsValue* out) {
+static void kvsvalue_conversion_cpp_to_rust(const KvsValue& value, FFI_KvsValue* out) {
     switch (value.getType()) {
         case KvsValue::Type::Number:
             out->type_     = FFI_KvsValueType::Number;
@@ -82,7 +82,7 @@ static void make_ffi_from_cpp(const KvsValue& value, FFI_KvsValue* out) {
             out->array_ptr = (FFI_KvsValue*)std::malloc(len * sizeof(FFI_KvsValue));
             out->array_len = len;
             for (size_t i = 0; i < len; ++i) {
-                make_ffi_from_cpp(arr[i], &out->array_ptr[i]);
+                kvsvalue_conversion_cpp_to_rust(arr[i], &out->array_ptr[i]);
             }
             break;
         }
@@ -97,7 +97,7 @@ static void make_ffi_from_cpp(const KvsValue& value, FFI_KvsValue* out) {
             size_t idx = 0;
             for (auto& [k, vv] : obj) {
                 out->obj_keys[idx] = strdup(k.c_str());
-                make_ffi_from_cpp(vv, &out->obj_values[idx]);
+                kvsvalue_conversion_cpp_to_rust(vv, &out->obj_values[idx]);
                 ++idx;
             }
             break;
@@ -377,7 +377,7 @@ Result<bool> Kvs::is_value_default(const std::string_view key) {
 Result<bool> Kvs::set_value(const std::string_view key,
                             const KvsValue& value) {
     FFI_KvsValue ffi;
-    make_ffi_from_cpp(value, &ffi);
+    kvsvalue_conversion_cpp_to_rust(value, &ffi);
 
     FFIErrorCode code = set_value_ffi(
         kvshandle,
