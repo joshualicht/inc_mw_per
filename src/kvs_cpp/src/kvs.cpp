@@ -7,23 +7,28 @@
 using namespace std;
 
 
-// --------------------------------------------------------------------
-// Helper functions to convert between KvsValue and FFI_KvsValue
+/* --------------------------------------------------------------------*/
+/* Helper functions to convert between KvsValue and FFI_KvsValue*/
 
 static KvsValue kvsvalue_conversion_rust_to_cpp(const FFI_KvsValue& value) {
+    KvsValue result = KvsValue(nullptr);
+
     switch (value.type_) {
       case FFI_KvsValueType::Number:
-        return KvsValue(value.number);
+        result = KvsValue(value.number);
+        break;
 
       case FFI_KvsValueType::Boolean:
-        return KvsValue(static_cast<bool>(value.boolean));
+        result = KvsValue(static_cast<bool>(value.boolean));
+        break;
 
       case FFI_KvsValueType::String:
-        // zero-copy idea: string_view constructor
-        return KvsValue(std::string(value.string));
+        result = KvsValue(std::string(value.string));
+        break;
 
       case FFI_KvsValueType::Null:
-        return KvsValue(nullptr);
+        result = KvsValue(nullptr);
+        break;
 
       case FFI_KvsValueType::Array: {
         std::vector<KvsValue> arr;
@@ -31,7 +36,8 @@ static KvsValue kvsvalue_conversion_rust_to_cpp(const FFI_KvsValue& value) {
         for (size_t i = 0; i < value.array_len; ++i) {
           arr.push_back(kvsvalue_conversion_rust_to_cpp(value.array_ptr[i]));
         }
-        return KvsValue(arr);
+        result = KvsValue(arr);
+        break;
       }
 
       case FFI_KvsValueType::Object: {
@@ -40,14 +46,16 @@ static KvsValue kvsvalue_conversion_rust_to_cpp(const FFI_KvsValue& value) {
         for (size_t i = 0; i < value.obj_len; ++i) {
           const char* key = value.obj_keys[i];
           obj.emplace(
-            std::string(key),        
+            std::string(key),
             kvsvalue_conversion_rust_to_cpp(value.obj_values[i])
           );
         }
-        return KvsValue(obj);
+        result = KvsValue(obj);
+        break;
       }
     }
-    return KvsValue(nullptr); // should never reach here
+
+    return result;
 }
 
 static void kvsvalue_conversion_cpp_to_rust(const KvsValue& value, FFI_KvsValue* out) {
@@ -65,7 +73,7 @@ static void kvsvalue_conversion_cpp_to_rust(const KvsValue& value, FFI_KvsValue*
         case KvsValue::Type::String: {
             out->type_     = FFI_KvsValueType::String;
             auto& s        = std::get<std::string>(value.getValue());
-            // strdup allocates with malloc
+            /* strdup allocates with malloc */
             out->string    = strdup(s.c_str());
             break;
         }
@@ -78,7 +86,7 @@ static void kvsvalue_conversion_cpp_to_rust(const KvsValue& value, FFI_KvsValue*
             out->type_     = FFI_KvsValueType::Array;
             auto& arr      = std::get<KvsValue::Array>(value.getValue());
             size_t len     = arr.size();
-            // malloc
+            /* malloc*/
             out->array_ptr = (FFI_KvsValue*)std::malloc(len * sizeof(FFI_KvsValue));
             out->array_len = len;
             for (size_t i = 0; i < len; ++i) {
@@ -129,7 +137,7 @@ static void free_ffi_kvsvalue_cpp(FFI_KvsValue* value) {
     }
 }
 
-// === Implementation of Key class ===
+/* === Implementation of Key class ===*/
 
 Key::Key() = default;
 
@@ -163,10 +171,13 @@ void Key::init_value(KvsValue&& value) {
 }
 
 std::string_view Key::get_id() const {
+    std::string_view result = {};  
+
     if (id_ptr.has_value()) {
-        return std::string_view(id_ptr.value(), id_len.value_or(0));
+        result = std::string_view(id_ptr.value(), id_len.value_or(0));
     }
-    return {}; 
+
+    return result;
 }
 
 const KvsValue* Key::get_value() const {
@@ -186,7 +197,7 @@ Key::~Key() {
 }
 
 
-// === Implementation of Filename class ===
+/* === Implementation of Filename class ===*/
 
 Filename::Filename() = default;
 
@@ -211,10 +222,13 @@ void Filename::set(const char* string, size_t len) {
 }
 
 std::string_view Filename::get() const {
+    std::string_view result = {}; 
+
     if (id_ptr.has_value()) {
-        return std::string_view(id_ptr.value(), id_len.value_or(0));
+        result = std::string_view(id_ptr.value(), id_len.value_or(0));
     }
-    return {}; 
+
+    return result;
 }
 
 void Filename::dealloc() {
@@ -231,7 +245,7 @@ Filename::~Filename() {
 
 
 
-// === Implementation of KVS class ===
+/* === Implementation of KVS class ===*/
 
 Kvs::Kvs(Kvs&& other) noexcept
   : kvshandle(other.kvshandle)
@@ -266,82 +280,90 @@ Result<Kvs> Kvs::open(const InstanceId& id, OpenNeedDefaults need_defaults, Open
         &kvshandle
     );
 
+    Result<Kvs> result = std::unexpected(ErrorCode::UnmappedError); /* Needs default value because of std::expected in combination with kvs object*/
     if (code != FFIErrorCode::Ok) {
         return std::unexpected(static_cast<ErrorCode>(code));
     }
-
-    Kvs kvs_instance;
-    kvs_instance.kvshandle = kvshandle;
-
-    return Result<Kvs>{ std::in_place, std::move(kvs_instance)};
-}
-
-// Set flush on exit flag
-void Kvs::set_flush_on_exit(bool flush) {
-    // Empty implementation
-    return;
-}
-
-// Reset KVS to initial state
-Result<void> Kvs::reset() {
-    FFIErrorCode code = reset_ffi(kvshandle);
-    if (code != FFIErrorCode::Ok) {
-        return std::unexpected(static_cast<ErrorCode>(code));
+    else{
+        Kvs kvs_instance;
+        kvs_instance.kvshandle = kvshandle;
+        result = Result<Kvs>{ std::in_place, std::move(kvs_instance)};
     }
-    else {
-        return {};
-    }
-}
-
-// Retrieve all keys in the KVS
-Result<vector<Key>> Kvs::get_all_keys() {
-
-    const char** keys_ptr = nullptr;
-    size_t len = 0;
-    FFIErrorCode code = get_all_keys_ffi(kvshandle, &keys_ptr, &len);
-    if (code != FFIErrorCode::Ok) {
-        return unexpected(static_cast<ErrorCode>(code));
-    }
-
-    vector<Key> result;
-    result.reserve(len);
-    for (size_t i = 0; i < len; ++i) {
-        Key k;
-        size_t slen = std::strlen(keys_ptr[i]);
-        k.set_key(keys_ptr[i], slen);
-        result.push_back(std::move(k));
-    }
-    free_all_keys_vec_ffi(keys_ptr, len);
 
     return result;
 }
 
-// Check if a key exists
+/* Set flush on exit flag*/
+void Kvs::set_flush_on_exit(bool flush) {
+    /* Empty implementation*/
+    return;
+}
+
+/* Reset KVS to initial state*/
+Result<void> Kvs::reset() {
+    FFIErrorCode code = reset_ffi(kvshandle);
+
+    Result<void> result;
+    if (code == FFIErrorCode::Ok) {
+        result = {};
+    }
+    else {
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+
+    return result;
+}
+
+/* Retrieve all keys in the KVS*/
+Result<std::vector<Key>> Kvs::get_all_keys() {
+    const char** keys_ptr = nullptr;
+    size_t len = 0;
+    FFIErrorCode code = get_all_keys_ffi(kvshandle, &keys_ptr, &len);
+
+    Result<std::vector<Key>> result;
+    if (code == FFIErrorCode::Ok) {
+        std::vector<Key> temp_result;
+        temp_result.reserve(len);
+        for (size_t i = 0; i < len; ++i) {
+            Key k;
+            size_t slen = std::strlen(keys_ptr[i]);
+            k.set_key(keys_ptr[i], slen);
+            temp_result.push_back(std::move(k));
+        }
+        free_all_keys_vec_ffi(keys_ptr, len);
+
+        result = std::move(temp_result);
+    }
+    else {
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+
+    return result;
+}
+
+/* Check if a key exists*/
 Result<bool> Kvs::key_exists(const string_view key) {
     uint8_t exists = 0;
     FFIErrorCode code = key_exists_ffi(kvshandle, key.data(), &exists);
-    if (code != FFIErrorCode::Ok) {
-        return unexpected(static_cast<ErrorCode>(code));
+    
+    Result<bool> result;
+    if (code == FFIErrorCode::Ok) {
+        result = static_cast<bool>(exists);
     }
-    return static_cast<bool>(exists);
+    else {
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+    
+    return result;
 }
 
-// Retrieve the value associated with a key
+/* Retrieve the value associated with a key*/
 Result<KvsValue> Kvs::get_value(const std::string_view key) {
-    // Empty implementation
-    //TODO implementation + refactor to key class
+    /* Empty implementation: TODO implementation + refactor to key class*/
     return KvsValue{nullptr};
 }
 
-// Retrieve the default value associated with a key
-//Result<Key> Kvs::get_default_value(const std::string_view key) {
-//    // Empty implementation
-//    //TODO
-//    Key k;
-//
-//
-//    return k; 
-//}
+/*Retrieve the default value associated with a key*/
 Result<Key> Kvs::get_default_value(const std::string_view key) {
     FFI_KvsValue value;
     FFIErrorCode code = get_default_value_ffi(
@@ -349,98 +371,118 @@ Result<Key> Kvs::get_default_value(const std::string_view key) {
         key.data(),
         &value
     );
-    if (code != FFIErrorCode::Ok) {
-        return std::unexpected(static_cast<ErrorCode>(code));
+    Result<Key> result;
+    if (code == FFIErrorCode::Ok) {
+        KvsValue cpp = kvsvalue_conversion_rust_to_cpp(value);
+        Key k;
+        k.init_value(std::move(cpp));
+        free_ffi_kvsvalue_rust(&value);
+        result = std::move(k);
     }
-
+    else {
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
     
-    KvsValue cpp = kvsvalue_conversion_rust_to_cpp(value);
-
-    Key k;
-    k.init_value(std::move(cpp));
-    free_ffi_kvsvalue_rust(&value);
-
-    return k;
+    return result;
 }
 
-// Check if a key has a default value
+/* Check if a key has a default value*/
 Result<bool> Kvs::is_value_default(const std::string_view key) {
     uint8_t is_default = 0;
     FFIErrorCode code = is_value_default_ffi(kvshandle, key.data(), &is_default);
-    if (code != FFIErrorCode::Ok) {
-        return unexpected(static_cast<ErrorCode>(code));
+
+    Result<bool> result;
+    if (code == FFIErrorCode::Ok) {
+        result = is_default;
     }
-    return static_cast<bool>(is_default);
+    else{
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+    
+    return result;
 }
 
-// Set the value for a key
+/* Set the value for a key*/
 Result<bool> Kvs::set_value(const std::string_view key,
                             const KvsValue& value) {
     FFI_KvsValue ffi;
     kvsvalue_conversion_cpp_to_rust(value, &ffi);
 
-    FFIErrorCode code = set_value_ffi(
-        kvshandle,
-        key.data(),
-        &ffi
-    );
-
+    FFIErrorCode code = set_value_ffi(kvshandle, key.data(), &ffi);
     free_ffi_kvsvalue_cpp(&ffi);
 
-    if (code != FFIErrorCode::Ok) {
-        return std::unexpected(static_cast<ErrorCode>(code));
+    Result<bool> result;
+    if (code == FFIErrorCode::Ok) {
+        result = true;
     }
-    return true;
+    else{
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+
+    return result;
 }
 
-// Remove a key-value pair
+/* Remove a key-value pair*/
 Result<void> Kvs::remove_key(const string_view key) {
     FFIErrorCode code = remove_key_ffi(kvshandle, key.data());
-    if (code != FFIErrorCode::Ok) {
-        return unexpected(static_cast<ErrorCode>(code));
+
+    Result<void> result;
+    if (code == FFIErrorCode::Ok) {
+        result = {};
     }
-    return {};
+    else{
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+
+    return result;
 }
 
-// Flush the key-value store
+/* Flush the key-value store*/
 Result<void> Kvs::flush() {
     FFIErrorCode code = flush_ffi(kvshandle);
-    if (code != FFIErrorCode::Ok) {
-        return unexpected(static_cast<ErrorCode>(code));
+
+    Result<void> result;
+    if (code == FFIErrorCode::Ok) {
+        result = {};
     }
-    return {};
+    else{
+        result = std::unexpected(static_cast<ErrorCode>(code));
+    }
+
+    return result;
 }
 
-// Retrieve the snapshot count
+/* Retrieve the snapshot count*/
 size_t Kvs::snapshot_count() const {
     size_t count = 0;
     FFIErrorCode code = snapshot_count_ffi(kvshandle, &count);
-    if (code != FFIErrorCode::Ok) {
-        return 0;
-    }
-    return count;
+
+    return (code == FFIErrorCode::Ok) ? count : 0;
 }
 
-// Retrieve the max snapshot count
+/* Retrieve the max snapshot count*/
 size_t Kvs::max_snapshot_count() const {
     size_t max = 0;
     FFIErrorCode code = snapshot_max_count_ffi(&max);
-    if (code != FFIErrorCode::Ok) {
-        return 0;
-    }
-    return max;
+
+    return (code == FFIErrorCode::Ok) ? max : 0;
 }
 
-// Restore the key-value store from a snapshot
+/* Restore the key-value store from a snapshot*/
 Result<void> Kvs::snapshot_restore(const SnapshotId& snapshot_id) {
     FFIErrorCode code = snapshot_restore_ffi(kvshandle, snapshot_id.id);
-    if (code != FFIErrorCode::Ok) {
-        return unexpected(static_cast<ErrorCode>(code));
+
+    Result<void> result;
+    if (code == FFIErrorCode::Ok) {
+        result = {};
+    }else{
+        result = std::unexpected(static_cast<ErrorCode>(code));
     }
-    return {};
+
+    return result;
 }
 
-// Get the filename for a snapshot
+/* Get the filename for a snapshot*/
 Result<Filename> Kvs::get_kvs_filename(const SnapshotId& snapshot_id) const {
 
     const char*  keys_ptr = nullptr;
@@ -448,6 +490,7 @@ Result<Filename> Kvs::get_kvs_filename(const SnapshotId& snapshot_id) const {
     if (code != FFIErrorCode::Ok) {
         return unexpected(static_cast<ErrorCode>(code));
     }
+
     Filename fname;
     size_t slen = std::strlen(keys_ptr);
     fname.set(keys_ptr, slen);
@@ -455,11 +498,11 @@ Result<Filename> Kvs::get_kvs_filename(const SnapshotId& snapshot_id) const {
     return fname;
 }
 
-// Get the hash filename for a snapshot
+/* Get the hash filename for a snapshot*/
 Result<Filename> Kvs::get_kvs_hash_filename(const SnapshotId& snapshot_id) const {
 
     const char*  keys_ptr = nullptr;
-        FFIErrorCode code = get_hash_filename_ffi(kvshandle, snapshot_id.id, &keys_ptr);
+    FFIErrorCode code = get_hash_filename_ffi(kvshandle, snapshot_id.id, &keys_ptr);
     if (code != FFIErrorCode::Ok) {
         return unexpected(static_cast<ErrorCode>(code));
     }

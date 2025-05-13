@@ -62,30 +62,30 @@
 struct InstanceId {
     size_t id;
     
-    // Constructor to initialize 'id'
+    /* Constructor to initialize 'id'*/
     InstanceId(size_t id) { this->id = id; }
 };
 
 struct SnapshotId {
     size_t id;
 
-    // Constructor to initialize 'id'
+    /* Constructor to initialize 'id'*/
     SnapshotId(size_t id) { this->id = id; }
 };
 
-// Need-Defaults flag
+/* Need-Defaults flag*/
 enum class OpenNeedDefaults{
-    Optional = 0, // Optional: Open defaults only if available
-    Required = 1// Required: Defaults must be available
+    Optional = 0, /* Optional: Open defaults only if available*/
+    Required = 1 /* Required: Defaults must be available*/
 };
 
-// Need-KVS flag
+/* Need-KVS flag*/
 enum class OpenNeedKvs {
-    Optional = 0, // Optional: Use an empty KVS if no KVS is available
-    Required = 1 // Required: KVS must be already exist
+    Optional = 0, /* Optional: Use an empty KVS if no KVS is available*/
+    Required = 1 /* Required: KVS must be already exist*/
 };
 
-// Define the KvsValue class
+/* Define the KvsValue class*/
 /**
  * @class KvsValue
  * @brief Represents a flexible value type that can hold various data types, 
@@ -121,11 +121,11 @@ enum class OpenNeedKvs {
  */
 class KvsValue {
 public:
-    // Define the possible types for KvsValue
+    /* Define the possible types for KvsValue*/
     using Array = std::vector<KvsValue>;
     using Object = std::unordered_map<std::string, KvsValue>;
 
-    // Enum to represent the type of the value
+    /* Enum to represent the type of the value*/
     enum class Type {
         Number,
         Boolean,
@@ -135,7 +135,7 @@ public:
         Object
     };
 
-    // Constructors for each type
+    /* Constructors for each type*/
     KvsValue(double number) : value(number), type(Type::Number) {}
     KvsValue(bool boolean) : value(boolean), type(Type::Boolean) {}
     KvsValue(const std::string& str) : value(str), type(Type::String) {}
@@ -144,19 +144,19 @@ public:
     KvsValue(const Array& array) : value(array), type(Type::Array) {}
     KvsValue(const Object& object) : value(object), type(Type::Object) {}
 
-    // Get the type of the value
+    /* Get the type of the value*/
     Type getType() const { return type; }
 
-    // Access the underlying value (use std::get to retrieve the value)
+    /* Access the underlying value (use std::get to retrieve the value)*/
     const std::variant<double, bool, std::string, std::nullptr_t, Array, Object>& getValue() const {
         return value;
     }
 
 private:
-    // The underlying value
+    /* The underlying value*/
     std::variant<double, bool, std::string, std::nullptr_t, Array, Object> value;
 
-    // The type of the value
+    /* The type of the value*/
     Type type;
 };
 
@@ -231,63 +231,63 @@ class Filename {
         void dealloc();
 };
 
-// @brief 
+/* @brief */
 enum class ErrorCode {
-    // Error that was not yet mapped
+    /* Error that was not yet mapped*/
     UnmappedError = 0,
 
-    // File not found
+    /* File not found*/
     FileNotFound = 1,
 
-    // KVS file read error
+    /* KVS file read error*/
     KvsFileReadError = 2,
 
-    // KVS hash file read error
+    /* KVS hash file read error*/
     KvsHashFileReadError = 3,
 
-    // JSON parser error
+    /* JSON parser error*/
     JsonParserError = 4,
 
-    // JSON generator error
+    /* JSON generator error*/
     JsonGeneratorError = 5,
 
-    // Physical storage failure
+    /* Physical storage failure*/
     PhysicalStorageFailure = 6,
 
-    // Integrity corrupted
+    /* Integrity corrupted*/
     IntegrityCorrupted = 7,
 
-    // Validation failed
+    /* Validation failed*/
     ValidationFailed = 8,
 
-    // Encryption failed
+    /* Encryption failed*/
     EncryptionFailed = 9,
 
-    // Resource is busy
+    /* Resource is busy*/
     ResourceBusy = 10,
 
-    // Out of storage space
+    /* Out of storage space*/
     OutOfStorageSpace = 11,
 
-    // Quota exceeded
+    /* Quota exceeded*/
     QuotaExceeded = 12,
 
-    // Authentication failed
+    /* Authentication failed*/
     AuthenticationFailed = 13,
 
-    // Key not found
+    /* Key not found*/
     KeyNotFound = 14,
 
-    // Serialization failed
+    /* Serialization failed*/
     SerializationFailed = 15,
 
-    // Invalid snapshot ID
+    /* Invalid snapshot ID*/
     InvalidSnapshotId = 16,
 
-    // Conversion failed
+    /* Conversion failed*/
     ConversionFailed = 17,
 
-    // Mutex failed
+    /* Mutex failed*/
     MutexLockFailed = 18
 };
 
@@ -551,15 +551,12 @@ class Kvs {
         Result<Filename> get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
 
     private:
-        // Private constructor to prevent direct instantiation
+        /* Private constructor to prevent direct instantiation */
         Kvs() = default;
-        
+        /* Private member to hold the handle to the KVS instance */
         void* kvshandle = nullptr;
 
-
-        
-
-    /* // Not used in this example, but could be useful as its part of the original rust api.
+    /*  // Not used in this example, but could be useful as its part of the original rust api.
         // Internal storage and configuration details.
         std::mutex kvs_mutex;
         std::unordered_map<std::string, KvsValue> kvs;
