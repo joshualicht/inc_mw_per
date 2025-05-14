@@ -113,6 +113,7 @@ static void kvsvalue_conversion_cpp_to_rust(const KvsValue& value, FFI_KvsValue*
     }
 }
 
+/*Free FFI_KvsValue created in CPP */
 static void free_ffi_kvsvalue_cpp(FFI_KvsValue* value) {
     switch (value->type_) {
       case FFI_KvsValueType::String:
@@ -141,6 +142,10 @@ static void free_ffi_kvsvalue_cpp(FFI_KvsValue* value) {
 
 Key::Key() = default;
 
+/* Constructor to initialize Key object */
+/* Make sure, that the move constructor and move assignment operator reset the
+ * id_ptr and id_len to nullptr, so that the destructor does not free the
+ * memory twice. */
 Key::Key(Key&& other) noexcept
     : id_ptr(std::exchange(other.id_ptr, std::nullopt)),
       id_len(std::exchange(other.id_len, std::nullopt)),
@@ -190,6 +195,7 @@ void Key::dealloc() {
         id_ptr = std::nullopt;
         id_len = std::nullopt;
     }
+    /*Freeing the KVSValue will be done automatically by the destructor of KVSValue*/
 }
 
 Key::~Key() {
@@ -246,7 +252,10 @@ Filename::~Filename() {
 
 
 /* === Implementation of KVS class ===*/
-
+/* Constructor to initialize KVS object */
+/* Make sure, that the move constructor and move assignment operator reset the
+ * kvshandle to nullptr, so that the destructor does not free the
+ * kvs instance twice. */
 Kvs::Kvs(Kvs&& other) noexcept
   : kvshandle(other.kvshandle)
 {
@@ -358,10 +367,9 @@ Result<bool> Kvs::key_exists(const string_view key) {
 }
 
 /* Retrieve the value associated with a key*/
-Result<KvsValue> Kvs::get_value(const std::string_view key) {
-    /* Empty implementation: TODO implementation + refactor to key class*/
-    return KvsValue{nullptr};
-}
+/*Result<Key> Kvs::get_value(const std::string_view key) {
+    Empty implementation: TODO implementation + refactor to key class
+}/*
 
 /*Retrieve the default value associated with a key*/
 Result<Key> Kvs::get_default_value(const std::string_view key) {

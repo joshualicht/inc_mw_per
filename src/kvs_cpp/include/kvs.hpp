@@ -18,31 +18,42 @@
 *#include "Kvs.hpp"
 *
 *int main() {
-*    auto result = Kvs::open(InstanceId(0), OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+*    int rc = 0;
 *
-*    if (result.has_value()) {
-*        std::cout << "KVS opened successfully!" << std::endl;
-*
-*
-*        auto keys_result = result->get_all_keys();
-*        if (keys_result.has_value()) {
-*            std::cout << "Keys in KVS: ";
-*
-*            for (const auto& key : keys_result.value()) {
-*                std::cout << key.get_key() << " ";
-*            }
-*            std::cout << std::endl;
-*
-*        } else {
-*            std::cerr << "Failed to get keys: "
-*                      << static_cast<int>(keys_result.error()) << std::endl;
-*        }
+*    auto open_res = Kvs::open(InstanceId(0),
+*                              OpenNeedDefaults::Optional,
+*                              OpenNeedKvs::Optional);
+*    if (!open_res) {
+*        rc = -1;
 *    } else {
-*        std::cerr << "Failed to open KVS: "
-*                  << static_cast<int>(result.error()) << std::endl;
+*        Kvs kvs = std::move(*open_res);
+*
+*        // read all keys
+*        if (auto keys = kvs.get_all_keys(); keys) {
+*            for (auto &k : *keys) {
+*                std::cout << k.get_id() << ' ';
+*            }
+*            std::cout << '\n';
+*        }
+*
+*        // read default
+*        if (auto def = kvs.get_default_value("string"); def) {
+*            Key key = std::move(*def);
+*            std::cout << key.get_id() << ": ";
+*            auto v = key.get_value();
+*            if (v && v->getType() == KvsValue::Type::String) {
+*                std::cout << std::get<std::string>(v->getValue());
+*            }
+*            std::cout << '\n';
+*        }
+*
+*        // write a new value
+*        if (auto setr = kvs.set_value("Hello", KvsValue("Hello World!")); !setr) {
+*            rc = -2;
+*        }
 *    }
 *
-*    return 0;
+*    return rc;
 *}
 * \endcode
 */
@@ -210,7 +221,20 @@ class Key {
     private:
         void dealloc();
 };
-
+/* @brief */
+/* @class Filename
+ * @brief Represents a filename with optional length information.
+ *
+ * The Filename class is designed to manage a filename string and its length.
+ * It provides methods to set the filename, retrieve it, and handle memory
+ * management. The class uses std::optional to indicate whether the filename
+ * has been set or not.
+ *
+ * ## Usage:
+ * - Use `set(...)` to initialize the filename with a string and its length.
+ * - Use `get()` to retrieve the filename as a std::string_view.
+ * - The destructor automatically deallocates memory if necessary.
+ */
 class Filename {
     private:
         std::optional<const char*> id_ptr;
@@ -291,21 +315,20 @@ enum class ErrorCode {
     MutexLockFailed = 18
 };
 
-// Helper to create std::expected
+// Helper to create std::expected for Result functionality
 template <typename T>
 using Result = std::expected<T, ErrorCode>;
 
 /**
  * @class Kvs
- * @brief A thread-safe key-value store (KVS) with support for default values, snapshots, and persistence.
+ * @brief A thread-safe key-value store (KVS) CPP Wrapper for the Rust KVS implementation with support for default values, snapshots, and persistence.
  * 
  * The Kvs class provides an interface for managing a key-value store with features such as:
- * - Thread safety using a mutex.
  * - Support for default values.
  * - Snapshot management for persistence and restoration.
  * - Configurable flush-on-exit behavior.
  * 
- * Features:
+ * Features: (-> Done by Rust KVS)
  * - `FEAT_REQ__KVS__thread_safety`: Ensures thread safety using a mutex.
  * - `FEAT_REQ__KVS__default_values`: Allows optional default values for keys.
  * 
@@ -327,6 +350,9 @@ using Result = std::expected<T, ErrorCode>;
  * - `get_kvs_hash_filename`: Retrieves the hash filename associated with a snapshot.
  * 
  * Private Members:
+ * - `kvshandle`: A handle to the KVS instance, used for internal operations.
+ * 
+ * ----------------Currently not used----------------
  * - `kvs_mutex`: A mutex for ensuring thread safety.
  * - `kvs`: An unordered map for storing key-value pairs.
  * - `default_values`: An unordered map for storing optional default values.
@@ -396,11 +422,10 @@ class Kvs {
         /**
          * @brief Retrieves all keys stored in the key-value store.
          * 
-         * @return Result<std::vector<std::string_view>, ErrorCode> 
+         * @return Result<std::vector<std::Key>, ErrorCode> 
          *         A result object containing a vector of all keys on success, 
          *         or an error code on failure.
          */
-        // Result<std::vector<std::string_view>> get_all_keys();
         Result<std::vector<Key>> get_all_keys();
 
 
@@ -419,10 +444,10 @@ class Kvs {
          * @brief Retrieves the value associated with the specified key from the key-value store.
          * 
          * @param key The key for which the value is to be retrieved. It is passed as a string view to avoid unnecessary copying.
-         * @return A Result object containing either the retrieved value (of type KvsValue) or an error code (of type ErrorCode) 
+         * @return A Result object containing either the retrieved value (of type Key) or an error code (of type ErrorCode) 
          *         if the operation fails.
          */
-        Result<KvsValue> get_value(const std::string_view key);
+        Result<Key> get_value(const std::string_view key);
 
 
         /**
@@ -435,7 +460,7 @@ class Kvs {
          * @param key The key for which the default value is to be retrieved.
          *            It is passed as a string view to avoid unnecessary string copies.
          * 
-         * @return A Result object containing either the default value (KvsValue) if
+         * @return A Result object containing either the default value (Key) if
          *         the operation is successful, or an ErrorCode indicating the error
          *         if the operation fails.
          */
@@ -533,7 +558,7 @@ class Kvs {
          * @brief Retrieves the filename associated with a given snapshot ID in the key-value store.
          * 
          * @param snapshot_id The identifier of the snapshot for which the filename is to be retrieved.
-         * @return A string view representing the filename corresponding to the provided snapshot ID.
+         * @return A Filename Object corresponding to the provided snapshot ID.
          */
         Result<Filename> get_kvs_filename(const SnapshotId& snapshot_id) const;
 
@@ -546,7 +571,7 @@ class Kvs {
          * store metadata or integrity information for the snapshot.
          * 
          * @param snapshot_id The identifier of the snapshot for which the hash filename is requested.
-         * @return A string view representing the hash filename associated with the given snapshot ID.
+         * @return A Filename Object associated with the given snapshot ID.
          */
         Result<Filename> get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
 

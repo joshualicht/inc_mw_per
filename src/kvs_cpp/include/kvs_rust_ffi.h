@@ -52,6 +52,7 @@ struct FFI_KvsValue {
 
 extern "C" {
 
+/// Free FFI_KvsValue created in Rust
 void free_ffi_kvsvalue_rust(FFI_KvsValue *ptr);
 
 /// FFI function to drop the KVS instance.

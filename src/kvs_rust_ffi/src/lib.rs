@@ -219,6 +219,7 @@ fn kvsvalue_to_ffi_kvsvalue(value: &KvsValue) -> FFI_KvsValue {
     result
 }
 
+/// Free FFI_KvsValue created in Rust
 #[no_mangle]
 pub extern "C" fn free_ffi_kvsvalue_rust(ptr: *mut FFI_KvsValue) {
     if !ptr.is_null() {
