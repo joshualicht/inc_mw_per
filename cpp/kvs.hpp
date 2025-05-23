@@ -10,19 +10,47 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Example code for a Key-Value Store (KVS) in C++
-//
+/**
+* \brief Example Usage
+*
+* \code
+*#include <iostream>
+*#include "Kvs.hpp"
+*
+*int main() {
+*    // Open kvs
+*    auto open_res = KvsBuilder(InstanceId(0))
+*                        .need_defaults_flag(true)
+*                        .need_kvs_flag(true)
+*                        .build();
+*    if (!open_res) return 1;
+*    Kvs kvs = std::move(open_res.value());
+*
+*    // Set and get a value
+*    kvs.set_value("pi", KvsValue(3.14));
+*    auto get_res = kvs.get_value("pi");
+*
+*    // Delete a key
+*    kvs.remove_key("pi");
+*    std::cout << "has pi? " << (kvs.key_exists("pi").value_or(false) ? "yes" : "no") << "\n";
+*
+*    // Default values
+*    kvs.set_default_value("answer", KvsValue(42.0));
+*    if (kvs.flush_default()) {
+*        std::cout << "default flushed\n";
+*    }
+*
+*    return 0;
+*}
+* \endcode
+*/
 
 #include <string>
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
-#include <variant>
-#include <utility>
 #include <vector>
 #include "score/result/result.h"
-#include "score/result/details/expected/expected.h"
-#include "score/result/details/expected/extensions.h"
-#include "score/result/error.h"
 #include "score/json/json_parser.h"
 #include "score/json/json_writer.h"
 #include <optional>
@@ -76,6 +104,9 @@ enum class MyErrorCode : score::result::ErrorCode {
 
     /* Key not found*/
     KeyNotFound,
+    
+    /* Key default value not found*/
+    KeyDefaultNotFound,
 
     /* Serialization failed*/
     SerializationFailed,
@@ -103,20 +134,22 @@ score::result::Error MakeError(MyErrorCode code, std::string_view user_message =
 struct InstanceId {
     size_t id;
     
-    /* Constructor to initialize 'id'*/
-    explicit InstanceId(size_t id) { this->id = id; }
+    /* Constructor to initialize 'id' */
+    /* Not explicit to allow implicit construction e.g. function(0) instead function(InstanceId(0)) */
+    InstanceId(size_t id) { this->id = id; }
 };
 
 struct SnapshotId {
     size_t id;
 
     /* Constructor to initialize 'id'*/
-    explicit SnapshotId(size_t id) { this->id = id; }
+    /* Not explicit to allow implicit construction e.g. function(0) instead function(SnapshotId(0)) */
+    SnapshotId(size_t id) { this->id = id; }
 };
 
 /* Need-Defaults flag*/
 enum class OpenNeedDefaults{
-    Optional = 0, /* Optional: Open defaults only if available*/
+    Optional = 0, /* Optional: Use an empty defaults Storage if not available*/
     Required = 1 /* Required: Defaults must be available*/
 };
 
@@ -128,13 +161,8 @@ enum class OpenNeedKvs {
 
 /* Need-File flag */
 enum class OpenJsonNeedFile {
-    Optional = 0, /* Optional: Use an empty KVS if no KVS is available*/
-    Required = 1 /* Required: KVS must be already exist*/
-};
-/* Verify-Hash flag */
-enum class OpenJsonVerifyHash {
-    No = 0, /* Optional: Use an empty KVS if no KVS is available*/
-    Yes = 1 /* Required: KVS must be already exist*/
+    Optional = 0, /* Optional: If the file doesn't exist, start with empty data */
+    Required = 1 /* Required: The file must already exist */
 };
 
 /* Define the KvsValue class*/
@@ -215,30 +243,31 @@ private:
 
 /**
  * @class Kvs
- * @brief A thread-safe key-value store (KVS) CPP Wrapper for the Rust KVS implementation with support for default values, snapshots, and persistence.
+ * @brief A thread-safe key-value store (KVS) CPP Class.
  * 
  * The Kvs class provides an interface for managing a key-value store with features such as:
  * - Support for default values.
  * - Snapshot management for persistence and restoration.
  * - Configurable flush-on-exit behavior.
  * 
- * Features: (-> Done by Rust KVS)
- * - `FEAT_REQ__KVS__thread_safety`: Ensures thread safety using a mutex.
- * - `FEAT_REQ__KVS__default_values`: Allows optional default values for keys.
  * 
  * Public Methods:
  * - `open`: Opens the KVS with a specified instance ID and flags.
- * - `set_flush_on_exit`: Configures whether the KVS should flush to storage on exit.
- * - `get_all_keys`: Retrieves all keys stored in the KVS.
- * - `key_exists`: Checks if a specific key exists in the KVS.
- * - `get_value`: Retrieves the value associated with a specific key.
+ * - `set_flush_on_exit`: Configures whether the KVS should flush to storage on exit (does not control default values).
+ * - `reset`: Resets the KVS to its initial state.
+ * - `get_all_keys`: Retrieves all keys stored in the KVS (only written keys, not defaults).
+ * - `key_exists`: Checks if a specific key exists in the KVS (only written keys).
+ * - `get_value`: Retrieves the value associated with a specific key (returns default if not written).
  * - `get_default_value`: Retrieves the default value associated with a specific key.
+ * - `reset_key`: Resets a key to its default value if available.
  * - `has_default_value`: Checks if a default value exists for a specific key.
  * - `set_value`: Sets the value for a specific key in the KVS.
+ * - `set_default_value`: Sets a default value for a specific key.
  * - `remove_key`: Removes a specific key from the KVS.
  * - `flush`: Flushes the KVS to storage.
+ * - `flush_default`: Flushes the default values to storage.
  * - `snapshot_count`: Retrieves the number of available snapshots.
- * - `max_snapshot_count`: Retrieves the maximum number of snapshots allowed.
+ * - `snapshot_max_count`: Retrieves the maximum number of snapshots allowed.
  * - `snapshot_restore`: Restores the KVS from a specified snapshot.
  * - `get_kvs_filename`: Retrieves the filename associated with a snapshot.
  * - `get_kvs_hash_filename`: Retrieves the hash filename associated with a snapshot.
@@ -246,6 +275,7 @@ private:
  * Private Members:
  * - `kvs_mutex`: A mutex for ensuring thread safety.
  * - `kvs`: An unordered map for storing key-value pairs.
+ * - `default_mutex`: A mutex for default value operations.
  * - `default_values`: An unordered map for storing optional default values.
  * - `filename_prefix`: A string prefix for filenames associated with snapshots.
  * - `flush_on_exit`: An atomic boolean flag indicating whether to flush on exit.
@@ -254,6 +284,7 @@ private:
  * Blank should be used instead of void for Result class
  * Refer: "Blank and score::ResultBlank shall be used for `T` instead of `void`" in result.h
  */
+
 class Kvs {
     public:
 
@@ -298,7 +329,8 @@ class Kvs {
 
         /**
          * @brief Sets whether the key-value store should flush its contents to
-         *        persistent storage upon program exit.
+         *        persistent storage upon program exit. It does not influence the 
+         *        default values as a security mechanism -> flush_default() needs to be called
          * 
          * @param flush A boolean value indicating whether to enable or disable
          *              flushing on exit. If true, the store will flush its
@@ -316,19 +348,21 @@ class Kvs {
     
         /**
          * @brief Retrieves all keys stored in the key-value store.
+         *        Important: It only retrieves the written keys, no default keys are returned. 
          * 
-         * @return score::Result<std::vector<std::Key>, ErrorCode> 
-         *         A score::Result object containing a vector of all keys on success, 
-         *         or an error code on failure.
+         * @return score::Result<std::vector<std::string_view>> 
+         *         A score::Result object containing a vector of all written keys on success, 
+         *         or an Errorcode on failure.
          */
-        score::Result<std::vector<std::string>> get_all_keys();
+        score::Result<std::vector<std::string_view>> get_all_keys();
 
 
         /**
-         * @brief Checks if a key exists in the key-value store.
+         * @brief Checks if a key exists in the key-value store. If the key was never written it will always 
+         *        return false even if a default value for the key is available.
          * 
          * @param key The key to check for existence, provided as a std::string_view.
-         * @return score::Result<bool, ErrorCode> 
+         * @return score::Result<bool> 
          *         - On success: A score::Result containing `true` if the key exists, or `false` if it does not.
          *         - On failure: A score::Result containing an appropriate ErrorCode.
          */
@@ -337,9 +371,10 @@ class Kvs {
 
         /**
          * @brief Retrieves the value associated with the specified key from the key-value store.
+         *        If no Key was written, it returns the default value if available.
          * 
          * @param key The key for which the value is to be retrieved. It is passed as a string view to avoid unnecessary copying.
-         * @return A score::Result object containing either the retrieved value (of type Key) or an error code (of type ErrorCode) 
+         * @return A score::Result object containing either the retrieved value (KvsValue) or an ErrorCode
          *         if the operation fails.
          */
         score::Result<KvsValue> get_value(const std::string_view key);
@@ -355,11 +390,28 @@ class Kvs {
          * @param key The key for which the default value is to be retrieved.
          *            It is passed as a string view to avoid unnecessary string copies.
          * 
-         * @return A score::Result object containing either the default value (Key) if
+         * @return A score::Result object containing either the default value (KvsValue) if
          *         the operation is successful, or an ErrorCode indicating the error
          *         if the operation fails.
          */
         score::Result<KvsValue> get_default_value(const std::string_view key);
+
+
+        /**
+         * @brief Resets a specified key to its default value.
+         * 
+         * This function attempts to reset a key to its default value. 
+         * If no default value is available, it returns an ErrorCode and doesn't delete the key.
+         * If no key was ever written, but a default value is available it returns successful.
+         * If a key was written and it has a default value, it deletes the written key.
+         * 
+         * @param key The key to be reset to the default value
+         * 
+         * @return A score::Result object that indicates the success or failure of the operation.
+         *         - On success: Returns a blank score::Result.
+         *         - On failure: Returns an ErrorCode describing the error.
+         */
+        score::ResultBlank reset_key(const std::string_view key);
 
 
         /**
@@ -369,13 +421,11 @@ class Kvs {
          * value in the key-value store.
          * 
          * @param key The key to check, provided as a string view.
-         * @return score::Result<bool, ErrorCode> 
-         *         - `true` if the key has a default value.
-         *         - `false` if the key does not have a default value.
-         *         - An `ErrorCode` if an error occurs during the operation.
+         * @return score::Result<bool> 
+         *         - On success: Returns a score::Result<bool> containing bool if the default value exists.
+         *         - On failure: Returns a score::Result containing an appropriate ErrorCode.
          */
-        score::Result<bool> is_value_default(const std::string_view key);
-
+        score::Result<bool> has_default_value(const std::string_view key);
 
 
         /**
@@ -385,11 +435,25 @@ class Kvs {
          *            It is represented as a string view to avoid unnecessary copying.
          * @param value The value to be stored, represented as a KvsValue object.
          * 
-         * @return score::Result<bool, ErrorCode> 
-         *         - On success: Returns a score::Result containing `true` if the value was successfully set.
+         * @return A score::Result object that indicates the success or failure of the operation.
+         *         - On success: Returns a blank score::Result.
+         *         - On failure: Returns an ErrorCode describing the error.
+         */
+        score::ResultBlank set_value(const std::string_view key, const KvsValue& value);
+
+        
+        /**
+         * @brief Stores a default key-value pair in the key-value store.
+         * 
+         * @param key The key associated with the value to be stored. 
+         *            It is represented as a string view to avoid unnecessary copying.
+         * @param value The value to be stored, represented as a KvsValue object.
+         * 
+         * @return score::ResultBlank
+         *         - On success: Returns a score::Result containing Blank if the default value was successfully set.
          *         - On failure: Returns a score::Result containing an appropriate ErrorCode.
          */
-        score::Result<bool> set_value(const std::string_view key, const KvsValue& value);
+        score::ResultBlank set_default_value(const std::string_view key, const KvsValue& value);
 
 
         /**
@@ -397,9 +461,9 @@ class Kvs {
          * 
          * @param key The key of the key-value pair to be removed. It is passed as a 
          *            std::string_view to avoid unnecessary copying.
-         * @return score::Result<void, ErrorCode> Returns a score::Result object. If the operation 
-         *         is successful, it contains no value (void). If an error occurs, 
-         *         it contains an appropriate ErrorCode.
+         * @return A score::Result object that indicates the success or failure of the operation.
+         *         - On success: Returns a blank score::Result.
+         *         - On failure: Returns an ErrorCode describing the error.
          */
         score::ResultBlank remove_key(const std::string_view key);
 
@@ -409,10 +473,22 @@ class Kvs {
          *        are written to the underlying storage.
          * 
          * @return A score::Result object that indicates the success or failure of the operation.
-         *         - On success: Returns a void score::Result.
+         *         - On success: Returns a blank score::Result.
          *         - On failure: Returns an ErrorCode describing the error.
          */
         score::ResultBlank flush();
+
+
+        /**
+         * @brief Flushes the key-value store for default values, ensuring that all pending changes 
+         *        are written to the underlying storage.
+         *        Important: It is not controlled by flush_on_exit, flush_default needs be called to flush!
+         * 
+         * @return A score::Result object that indicates the success or failure of the operation.
+         *         - On success: Returns a blank score::Result.
+         *         - On failure: Returns an ErrorCode describing the error.
+         */
+        score::ResultBlank flush_default();
 
 
         /**
@@ -431,7 +507,7 @@ class Kvs {
          * 
          * @return The maximum count of snapshots as a size_t value.
          */
-        size_t max_snapshot_count() const;
+        size_t snapshot_max_count() const;
 
 
         /**
@@ -442,7 +518,7 @@ class Kvs {
          * restoration process fails, an appropriate error code is returned.
          * 
          * @param snapshot_id The identifier of the snapshot to restore from.
-         * @return score::Result<void, ErrorCode> 
+         * @return score::ResultBlank 
          *         - On success: An empty score::Result indicating the restoration was successful.
          *         - On failure: An error code describing the reason for the failure.
          */
@@ -453,9 +529,9 @@ class Kvs {
          * @brief Retrieves the filename associated with a given snapshot ID in the key-value store.
          * 
          * @param snapshot_id The identifier of the snapshot for which the filename is to be retrieved.
-         * @return A Filename Object corresponding to the provided snapshot ID.
+         * @return A String with the filename associated with the snapshot ID.
          */
-        score::Result<std::string> get_kvs_filename(const SnapshotId& snapshot_id) const;
+        std::string get_kvs_filename(const SnapshotId& snapshot_id) const;
 
 
         /**
@@ -466,29 +542,32 @@ class Kvs {
          * store metadata or integrity information for the snapshot.
          * 
          * @param snapshot_id The identifier of the snapshot for which the hash filename is requested.
-         * @return A Filename Object associated with the given snapshot ID.
+         * @return A String with the filename of the hash file associated with the snapshot ID.
          */
-        score::Result<std::string> get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
+        std::string get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
 
     private:
         /* Private constructor to prevent direct instantiation */
         Kvs() = default;
 
-        static score::Result<std::unordered_map<std::string, KvsValue>> open_json(const std::string& filename_prefix, OpenJsonNeedFile need_file, OpenJsonVerifyHash verify_hash);
+        /* Open and parse a JSON file */
+        static score::Result<std::unordered_map<std::string, KvsValue>> open_json(const std::string& filename_prefix, OpenJsonNeedFile need_file);
 
-        static score::Result<KvsValue> any_to_kvsvalue(const score::json::Any& any);
+        /* Rotate Snapshots */
+        score::ResultBlank snapshot_rotate();
 
         /* Internal storage and configuration details.*/
         std::mutex kvs_mutex;
         std::unordered_map<std::string, KvsValue> kvs;
     
         /* Optional default values */
+        std::mutex default_mutex;
         std::unordered_map<std::string, KvsValue> default_values;
     
         /* Filename prefix */
         std::string filename_prefix;
     
-        /* Flush on exit flag */
+        /* Flush on exit flag for written Keys */
         std::atomic<bool> flush_on_exit;
    
 };
