@@ -2,11 +2,15 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include "score/json/json_parser.h"
+#include "score/json/json_writer.h"
+#include "score/filesystem/filesystem.h"
+
 
 using namespace std;
 
-//TODO Add Directory naming convention
 //TODO Add Score Logging
+//TODO Replace std libs with baselibs
 
 /*********************** Hash Functions *********************/
 /*Adler 32 checksum algorithm*/ 
@@ -44,6 +48,7 @@ std::array<uint8_t,4> get_hash_bytes_adler32(uint32_t hash)
     };
     return value;
 }
+
 /***** Wrapper Functions for Hash *****/
 /* Wrapper Functions should isolate the Hash Algorithm, so that the algorithm can be easier replaced*/
 
@@ -249,11 +254,11 @@ score::result::Error MakeError(MyErrorCode code, std::string_view user_message) 
 
 
 /*********************** KVS Builder Implementation *********************/
-KvsBuilder::KvsBuilder(const InstanceId& instance_id)
+KvsBuilder::KvsBuilder(std::string&& process_name, const InstanceId& instance_id)
     : instance_id(instance_id)
     , need_defaults(false)
     , need_kvs(false)
-    , dir(std::nullopt)
+    , process_name(std::move(process_name))
 {}
 
 KvsBuilder& KvsBuilder::need_defaults_flag(bool flag) {
@@ -266,17 +271,12 @@ KvsBuilder& KvsBuilder::need_kvs_flag(bool flag) {
     return *this;
 }
 
-KvsBuilder& KvsBuilder::directory(const std::string& d) {
-    dir = d;
-    return *this;
-}
-
 score::Result<Kvs> KvsBuilder::build() const {
     return Kvs::open(
+        std::move(process_name),
         instance_id,
         need_defaults ? OpenNeedDefaults::Required : OpenNeedDefaults::Optional,
-        need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional,
-        dir
+        need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional
     );
 }
 
@@ -335,13 +335,15 @@ Kvs& Kvs::operator=(Kvs&& other) noexcept
 }
 
 /* Open KVS Instance */
-score::Result<Kvs> Kvs::open(const InstanceId& instance_id,OpenNeedDefaults need_defaults,
-    OpenNeedKvs need_kvs, const optional<string>& dir)
+score::Result<Kvs> Kvs::open(const string&& process_name, const InstanceId& instance_id,OpenNeedDefaults need_defaults,
+    OpenNeedKvs need_kvs)
 {
-    const string  d               = dir.has_value() ? dir.value() + "/" : string();
-    const string  filename_default = d + "kvs_" + to_string(instance_id.id) + "_default";
-    const string  filename_prefix  = d + "kvs_" + to_string(instance_id.id);
-    const string  filename_kvs     = filename_prefix + "_0";
+
+    const string data_folder = "./data_folder/"; /*TODO Specify Data Folder here*/
+    const string dir = data_folder + process_name + "/";
+    const string filename_default = dir + "kvs_" + to_string(instance_id.id) + "_default";
+    const string filename_prefix = dir + "kvs_" + to_string(instance_id.id);
+    const string filename_kvs = filename_prefix + "_0";
 
     score::Result<Kvs> result = score::MakeUnexpected(MyErrorCode::UnmappedError); /* Redundant initialization needed, since Resul<KVS> would call the implicitly-deleted default constructor of KVS */
     Kvs store;
@@ -698,25 +700,36 @@ score::ResultBlank Kvs::flush() {
             }else{
                 /* Write JSON Data */
                 const std::string fn_json = filename_prefix + "_0.json";
-                
-                std::ofstream out(fn_json, std::ios::binary);
-                if (!out.write(buf.data(), buf.size())) {
-                    result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
-                }else{
-                    /* Write Hash File */
-                    std::array<uint8_t, 4> hash_bytes = get_hash_bytes(buf);
-                    const std::string fn_hash = filename_prefix + "_0.hash";
-                    std::ofstream hout(fn_hash, std::ios::binary);
-                    if (!hout.write(reinterpret_cast<const char*>(hash_bytes.data()), hash_bytes.size())) {
+                score::filesystem::Path json_path{fn_json};
+                score::filesystem::Path dir = json_path.ParentPath();
+                if  (!dir.Empty()){
+                    score::filesystem::Filesystem fs = score::filesystem::FilesystemFactory{}.CreateInstance(); /* noexcept call*/
+                    const auto create_path_res = fs.standard->CreateDirectories(dir);
+                    if(!create_path_res.has_value()){
                         result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
-                    } else {
-                        result = score::ResultBlank{};
+                    }else{
+                        std::ofstream out(fn_json, std::ios::binary);
+                        if (!out.write(buf.data(), buf.size())) {
+                            result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+                        }else{
+                            /* Write Hash File */
+                            std::array<uint8_t, 4> hash_bytes = get_hash_bytes(buf);
+                            const std::string fn_hash = filename_prefix + "_0.hash";
+                            std::ofstream hout(fn_hash, std::ios::binary);
+                            if (!hout.write(reinterpret_cast<const char*>(hash_bytes.data()), hash_bytes.size())) {
+                                result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+                            } else {
+                                result = score::ResultBlank{};
+                            }
+                        }
                     }
+                }else{
+                    std::cerr << "Failed to create directory for KVS file '" << fn_json << "'\n";
+                    result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
                 }
             }
         }
     }
-    
     
     return result;
 }
@@ -750,31 +763,39 @@ score::ResultBlank Kvs::flush_default() {
             result = score::MakeUnexpected(MyErrorCode::JsonGeneratorError);
         }else{
             std::string buf = std::move(buf_res.value());
-            /* No Snapshots Rotation */
-    
+
             /* Write JSON Data */
             const std::string fn_json = filename_prefix + "_default.json";
-            
-            std::ofstream out(fn_json, std::ios::binary);
-            if (!out.write(buf.data(), buf.size())) {
-                std::cerr << "Failed to open default file '" << fn_json << "'\n";
-                result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
-            }else{
-                /* Write Hash File */
-                std::array<uint8_t, 4> hash_bytes = get_hash_bytes(buf);
-                const std::string fn_hash = filename_prefix + "_default.hash";
-                std::ofstream hout(fn_hash, std::ios::binary);
-                if (!hout.write(reinterpret_cast<const char*>(hash_bytes.data()), hash_bytes.size())) {
+            score::filesystem::Path json_path{fn_json};
+            score::filesystem::Path dir = json_path.ParentPath();
+            if(!dir.Empty()){
+                score::filesystem::Filesystem fs = score::filesystem::FilesystemFactory{}.CreateInstance(); /* noexcept call*/
+                const auto create_path_res = fs.standard->CreateDirectories(dir);
+                if(!create_path_res.has_value()){
                     result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
-                } else {
-                    result = score::ResultBlank{};
+                }else{
+                    std::ofstream out(fn_json, std::ios::binary);
+                    if (!out.write(buf.data(), buf.size())) {
+                        std::cerr << "Failed to open default file '" << fn_json << "'\n";
+                        result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+                    }else{
+                        /* Write Hash File */
+                        std::array<uint8_t, 4> hash_bytes = get_hash_bytes(buf);
+                        const std::string fn_hash = filename_prefix + "_default.hash";
+                        std::ofstream hout(fn_hash, std::ios::binary);
+                        if (!hout.write(reinterpret_cast<const char*>(hash_bytes.data()), hash_bytes.size())) {
+                            result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+                        } else {
+                            result = score::ResultBlank{};
+                        }
+                    }
                 }
-            }
-            
+            }else{
+                std::cerr << "Failed to create directory for KVS file '" << fn_json << "'\n";
+                result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+            }            
         }
     }
-    
-    
     return result;
 }
 
@@ -839,7 +860,7 @@ score::ResultBlank Kvs::snapshot_restore(const SnapshotId& snapshot_id) {
     score::ResultBlank result = score::MakeUnexpected(MyErrorCode::UnmappedError);
     
     /* fail if the snapshot ID is the current KVS */
-    if (snapshot_id.id == 0) {
+    if (0 == snapshot_id.id) {
         result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);
     }else if (snapshot_count() < snapshot_id.id) {
         result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);

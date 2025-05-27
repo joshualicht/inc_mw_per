@@ -19,7 +19,7 @@
 *
 *int main() {
 *    // Open kvs
-*    auto open_res = KvsBuilder(InstanceId(0))
+*    auto open_res = KvsBuilder("Process_Name", 0)
 *                        .need_defaults_flag(true)
 *                        .need_kvs_flag(true)
 *                        .build();
@@ -51,8 +51,6 @@
 #include <atomic>
 #include <vector>
 #include "score/result/result.h"
-#include "score/json/json_parser.h"
-#include "score/json/json_writer.h"
 #include <optional>
 #include <stdexcept>
 
@@ -283,6 +281,7 @@ private:
  * ----------------Notice----------------
  * Blank should be used instead of void for Result class
  * Refer: "Blank and score::ResultBlank shall be used for `T` instead of `void`" in result.h
+ * A KVS Object is not copyable, but it can be moved.
  */
 
 class Kvs {
@@ -305,6 +304,8 @@ class Kvs {
          * It allows the caller to specify whether default values and an existing KVS are required 
          * or optional during the opening process.
          * 
+         * @param process_name The name of the process that is opening the KVS. This is used to create a unique directory for the KVS instance.
+         *                     Important: It must be unique for each application to avoid conflicts.
          * @param id The instance ID of the KVS. This uniquely identifies the KVS instance.
          * @param need_defaults A flag of type OpenNeedDefaults indicating whether default values 
          *                      are required or optional.
@@ -313,7 +314,6 @@ class Kvs {
          * @param need_kvs A flag of type OpenNeedKvs indicating whether the KVS is required or optional.
          *                 - OpenNeedKvs::Required: The KVS must already exist.
          *                 - OpenNeedKvs::Optional: An empty KVS will be used if no KVS exists.
-         * 
          * @return A Result object containing either:
          *         - A Kvs object if the operation is successful.
          *         - An ErrorCode if an error occurs during the operation.
@@ -325,7 +325,7 @@ class Kvs {
          * - ErrorCode::ValidationFailed: Validation of the KVS data failed.
          * - ErrorCode::ResourceBusy: The KVS resource is currently in use.
          */
-        static score::Result<Kvs> open(const InstanceId& id, OpenNeedDefaults need_defaults, OpenNeedKvs need_kvs, const std::optional<std::string>& dir);
+        static score::Result<Kvs> open(const std::string&& process_name, const InstanceId& id, OpenNeedDefaults need_defaults, OpenNeedKvs need_kvs);
 
         /**
          * @brief Sets whether the key-value store should flush its contents to
@@ -583,7 +583,7 @@ public:
      * @brief Constructs a KvsBuilder for the given KVS instance.
      * @param instance_id Unique identifier for the KVS instance.
      */
-    explicit KvsBuilder(const InstanceId& instance_id);
+    explicit KvsBuilder(std::string&& process_name, const InstanceId& instance_id);
 
     /**
      * @brief Specify whether default values must be loaded.
@@ -600,13 +600,6 @@ public:
     KvsBuilder& need_kvs_flag(bool flag);
 
     /**
-     * @brief Set the key-value-storage permanent storage directory.
-     * @param d Filesystem path to use for snapshots and data.
-     * @return Reference to this builder (for chaining).
-     */
-    KvsBuilder& directory(const std::string& d);
-
-    /**
      * @brief Builds and opens the Kvs instance with the configured options.
      *
      * Internally calls Kvs::open() with the selected flags and directory.
@@ -619,5 +612,5 @@ private:
     InstanceId                         instance_id;   ///< ID of the KVS instance
     bool                               need_defaults; ///< Whether default values are required
     bool                               need_kvs;      ///< Whether an existing KVS is required
-    std::optional<std::string>         dir;           ///< Optional custom directory path
+    std::string                        process_name;  ///< Process name for the KVS files
 };
