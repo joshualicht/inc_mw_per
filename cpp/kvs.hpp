@@ -34,11 +34,6 @@
 *    kvs.remove_key("pi");
 *    std::cout << "has pi? " << (kvs.key_exists("pi").value_or(false) ? "yes" : "no") << "\n";
 *
-*    // Default values
-*    kvs.set_default_value("answer", KvsValue(42.0));
-*    if (kvs.flush_default()) {
-*        std::cout << "default flushed\n";
-*    }
 *
 *    return 0;
 *}
@@ -251,7 +246,7 @@ private:
  * 
  * Public Methods:
  * - `open`: Opens the KVS with a specified instance ID and flags.
- * - `set_flush_on_exit`: Configures whether the KVS should flush to storage on exit (does not control default values).
+ * - `set_flush_on_exit`: Configures whether the KVS should flush to storage on exit.
  * - `reset`: Resets the KVS to its initial state.
  * - `get_all_keys`: Retrieves all keys stored in the KVS (only written keys, not defaults).
  * - `key_exists`: Checks if a specific key exists in the KVS (only written keys).
@@ -329,8 +324,7 @@ class Kvs {
 
         /**
          * @brief Sets whether the key-value store should flush its contents to
-         *        persistent storage upon program exit. It does not influence the 
-         *        default values as a security mechanism -> flush_default() needs to be called
+         *        persistent storage upon program exit.
          * 
          * @param flush A boolean value indicating whether to enable or disable
          *              flushing on exit. If true, the store will flush its
@@ -441,20 +435,6 @@ class Kvs {
          */
         score::ResultBlank set_value(const std::string_view key, const KvsValue& value);
 
-        
-        /**
-         * @brief Stores a default key-value pair in the key-value store.
-         * 
-         * @param key The key associated with the value to be stored. 
-         *            It is represented as a string view to avoid unnecessary copying.
-         * @param value The value to be stored, represented as a KvsValue object.
-         * 
-         * @return score::ResultBlank
-         *         - On success: Returns a score::Result containing Blank if the default value was successfully set.
-         *         - On failure: Returns a score::Result containing an appropriate ErrorCode.
-         */
-        score::ResultBlank set_default_value(const std::string_view key, const KvsValue& value);
-
 
         /**
          * @brief Removes a key-value pair from the store based on the specified key.
@@ -477,18 +457,6 @@ class Kvs {
          *         - On failure: Returns an ErrorCode describing the error.
          */
         score::ResultBlank flush();
-
-
-        /**
-         * @brief Flushes the key-value store for default values, ensuring that all pending changes 
-         *        are written to the underlying storage.
-         *        Important: It is not controlled by flush_on_exit, flush_default needs be called to flush!
-         * 
-         * @return A score::Result object that indicates the success or failure of the operation.
-         *         - On success: Returns a blank score::Result.
-         *         - On failure: Returns an ErrorCode describing the error.
-         */
-        score::ResultBlank flush_default();
 
 
         /**
@@ -548,10 +516,7 @@ class Kvs {
 
     private:
         /* Private constructor to prevent direct instantiation */
-        Kvs() = default;
-
-        /* Open and parse a JSON file */
-        static score::Result<std::unordered_map<std::string, KvsValue>> open_json(const std::string& filename_prefix, OpenJsonNeedFile need_file);
+        Kvs();
 
         /* Rotate Snapshots */
         score::ResultBlank snapshot_rotate();
@@ -561,7 +526,6 @@ class Kvs {
         std::unordered_map<std::string, KvsValue> kvs;
     
         /* Optional default values */
-        std::mutex default_mutex;
         std::unordered_map<std::string, KvsValue> default_values;
     
         /* Filename prefix */
