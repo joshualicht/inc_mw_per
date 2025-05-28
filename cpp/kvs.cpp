@@ -99,7 +99,7 @@ score::Result<KvsValue> any_to_kvsvalue(const score::json::Any& any){
             auto conv = any_to_kvsvalue(elem);
             if (!conv) {
                 error = true;
-                result = score::MakeUnexpected(MyErrorCode::ConversionFailed);
+                result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
                 break;
             }
             arr.emplace_back(std::move(conv.value()));
@@ -115,7 +115,7 @@ score::Result<KvsValue> any_to_kvsvalue(const score::json::Any& any){
             auto conv = any_to_kvsvalue(element.second);
             if (!conv) {
                 error = true;
-                result = score::MakeUnexpected(MyErrorCode::ConversionFailed);
+                result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
                 break;
             }
             obj.emplace(
@@ -128,7 +128,7 @@ score::Result<KvsValue> any_to_kvsvalue(const score::json::Any& any){
         }
     }
     else{
-        result = score::MakeUnexpected(MyErrorCode::ConversionFailed);
+        result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
     }
 
     return result;
@@ -157,7 +157,7 @@ score::Result<score::json::Any> kvsvalue_to_any(const KvsValue& kv) {
             for (auto& elem : std::get<KvsValue::Array>(kv.getValue())) {
                 auto conv = kvsvalue_to_any(elem);
                 if (!conv) {
-                    result = score::MakeUnexpected(MyErrorCode::ConversionFailed);
+                    result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
                     error = true;
                     break;
                 }else{
@@ -175,7 +175,7 @@ score::Result<score::json::Any> kvsvalue_to_any(const KvsValue& kv) {
             for (auto& [k, v] : std::get<KvsValue::Object>(kv.getValue())) {
                 auto conv = kvsvalue_to_any(v);
                 if (!conv) {
-                    result = score::MakeUnexpected(MyErrorCode::ConversionFailed);
+                    result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
                     error = true;
                     break;
                 }else{
@@ -190,7 +190,7 @@ score::Result<score::json::Any> kvsvalue_to_any(const KvsValue& kv) {
             break;
         }
         default:
-            result = score::MakeUnexpected(MyErrorCode::ConversionFailed);
+            result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
             break;
     }
 
@@ -276,6 +276,8 @@ score::result::Error MakeError(MyErrorCode code, std::string_view user_message) 
 
 
 /*********************** KVS Builder Implementation *********************/
+//TODO Extend KVS Builder arguments in constructor (align with rust kvs)
+//TODO think about unique KVS Object
 KvsBuilder::KvsBuilder(std::string&& process_name, const InstanceId& instance_id)
     : instance_id(instance_id)
     , need_defaults(false)
@@ -601,16 +603,21 @@ score::ResultBlank Kvs::reset_key(const std::string_view key)
         result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
     }
     else {
-        auto search = default_values.find(std::string(key));
-        if (search == default_values.end()) {
+        auto search_default = default_values.find(std::string(key));
+        if (search_default == default_values.end()) {
             result = score::MakeUnexpected(MyErrorCode::KeyDefaultNotFound);
         }
         else {
-            const auto erased = kvs.erase(std::string(key));
-            if (erased > 0U) {
-                result = score::ResultBlank{};
-            } else {
-                result = score::MakeUnexpected(MyErrorCode::UnmappedError);
+            auto search_kvs = kvs.find(std::string(key));
+            if (search_kvs != kvs.end()) {
+                const auto erased = kvs.erase(std::string(key));
+                if (erased > 0U) {
+                    result = score::ResultBlank{};
+                } else {
+                    result = score::MakeUnexpected(MyErrorCode::UnmappedError);
+                }
+            }else{
+                result = score::MakeUnexpected(MyErrorCode::KeyDefaultNotFound);
             }
         }
     }
@@ -770,38 +777,43 @@ size_t Kvs::snapshot_max_count() const {
 /* Rotate Snapshots */
 score::ResultBlank Kvs::snapshot_rotate() {
     score::ResultBlank result = score::MakeUnexpected(MyErrorCode::UnmappedError);
-    bool error = false;
-    for (size_t idx = KVS_MAX_SNAPSHOTS; idx > 0; --idx) {
-        const string hash_old = filename_prefix + "_" + to_string(idx - 1) + ".hash";
-        const string hash_new = filename_prefix + "_" + to_string(idx)     + ".hash";
-        const string snap_old = filename_prefix + "_" + to_string(idx - 1) + ".json";
-        const string snap_new = filename_prefix + "_" + to_string(idx)     + ".json";
+    std::unique_lock<std::mutex> lock(kvs_mutex, std::try_to_lock);
+    if (lock.owns_lock()) {
+        bool error = false;
+        for (size_t idx = KVS_MAX_SNAPSHOTS; idx > 0; --idx) {
+            const string hash_old = filename_prefix + "_" + to_string(idx - 1) + ".hash";
+            const string hash_new = filename_prefix + "_" + to_string(idx)     + ".hash";
+            const string snap_old = filename_prefix + "_" + to_string(idx - 1) + ".json";
+            const string snap_new = filename_prefix + "_" + to_string(idx)     + ".json";
 
-        cout << "rotating: " << snap_old << " -> " << snap_new << endl;
-        /* Rename hash */
-        if (std::rename(hash_old.c_str(), hash_new.c_str()) != 0) {
-            if (errno != ENOENT) {
-                error = true;
-                cout << "error: could not rename hash file " << snap_old << ". Rename Errorcode " << errno << endl;
-                result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
-            }
-        }
-        if(!error){
-            /* Rename snapshot */
-            if (std::rename(snap_old.c_str(), snap_new.c_str()) != 0) {
+            cout << "rotating: " << snap_old << " -> " << snap_new << endl;
+            /* Rename hash */
+            if (std::rename(hash_old.c_str(), hash_new.c_str()) != 0) {
                 if (errno != ENOENT) {
                     error = true;
-                    cout << "error: could not rename snapshot file " << snap_old << ". Rename Errorcode " << errno << endl;
+                    cout << "error: could not rename hash file " << snap_old << ". Rename Errorcode " << errno << endl;
                     result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
                 }
             }
+            if(!error){
+                /* Rename snapshot */
+                if (std::rename(snap_old.c_str(), snap_new.c_str()) != 0) {
+                    if (errno != ENOENT) {
+                        error = true;
+                        cout << "error: could not rename snapshot file " << snap_old << ". Rename Errorcode " << errno << endl;
+                        result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+                    }
+                }
+            }
+            if(error){
+                break;
+            }
         }
-        if(error){
-            break;
+        if(!error){
+            result = score::ResultBlank{};
         }
-    }
-    if(!error){
-        result = score::ResultBlank{};
+    } else {
+        result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
     }
 
     return result;
@@ -810,30 +822,28 @@ score::ResultBlank Kvs::snapshot_rotate() {
 /* Restore the key-value store from a snapshot*/
 score::ResultBlank Kvs::snapshot_restore(const SnapshotId& snapshot_id) {
     score::ResultBlank result = score::MakeUnexpected(MyErrorCode::UnmappedError);
-    
-    /* fail if the snapshot ID is the current KVS */
-    if (0 == snapshot_id.id) {
-        result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);
-    }else if (snapshot_count() < snapshot_id.id) {
-        result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);
-    }else{
-        auto data_res = open_json(
-            filename_prefix + "_" + to_string(snapshot_id.id),
-            OpenJsonNeedFile::Required);
-        if (!data_res) {
-            result = score::MakeUnexpected(static_cast<MyErrorCode>(*data_res.error()));
+    std::unique_lock<std::mutex> lock(kvs_mutex, std::try_to_lock);
+    if (lock.owns_lock()) {
+        /* fail if the snapshot ID is the current KVS */
+        if (0 == snapshot_id.id) {
+            result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);
+        }else if (snapshot_count() < snapshot_id.id) {
+            result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);
         }else{
-            std::unique_lock<std::mutex> lock(kvs_mutex, std::try_to_lock);
-            if (lock.owns_lock()) {
+            auto data_res = open_json(
+                filename_prefix + "_" + to_string(snapshot_id.id),
+                OpenJsonNeedFile::Required);
+            if (!data_res) {
+                result = score::MakeUnexpected(static_cast<MyErrorCode>(*data_res.error()));
+            }else{
                 kvs = std::move(data_res.value());
                 result = score::ResultBlank{};
             }
-            else {
-                result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
-            }
         }
+    }else{
+        result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
     }
-
+    
     return result;
 }
 

@@ -111,7 +111,10 @@ enum class MyErrorCode : score::result::ErrorCode {
     ConversionFailed,
 
     /* Mutex failed*/
-    MutexLockFailed
+    MutexLockFailed,
+
+    /* Invalid value type*/
+    InvalidValueType
 };
 
 class MyErrorDomain final : public score::result::ErrorDomain
@@ -193,7 +196,7 @@ enum class OpenJsonNeedFile {
  * @endcode
  */
 
-class KvsValue {
+class KvsValue final{
 public:
     /* Define the possible types for KvsValue*/
     using Array = std::vector<KvsValue>;
@@ -279,7 +282,7 @@ private:
  * A KVS Object is not copyable, but it can be moved.
  */
 
-class Kvs {
+class Kvs final {
     public:
 
         ~Kvs();
@@ -541,7 +544,7 @@ class Kvs {
  * @class KvsBuilder
  * @brief Builder for opening a KVS object.
  */
-class KvsBuilder {
+class KvsBuilder final {
 public:
     /**
      * @brief Constructs a KvsBuilder for the given KVS instance.
