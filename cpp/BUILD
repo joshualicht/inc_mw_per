@@ -15,10 +15,11 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        "@score-baselibs//score/filesystem:filesystem",
         "@score-baselibs//score/json:interface",
         "@score-baselibs//score/json:json_parser",
         "@score-baselibs//score/result:result",
-        "@score-baselibs//score/filesystem:filesystem",
+        
     ],
     visibility = ["//visibility:public"]
 )
