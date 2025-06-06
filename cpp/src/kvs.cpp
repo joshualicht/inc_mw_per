@@ -92,6 +92,13 @@ score::Result<KvsValue> any_to_kvsvalue(const score::json::Any& any){
     }
     else if (auto s = any.As<std::string>(); s.has_value()) {
         result = KvsValue(s.value().get());
+
+        /* If Unittest is defined, we can simulate any_to_kvsvalue error here */
+        #ifdef UNITTEST
+            if( s.value().get() == "invalid") {
+                result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
+            }
+        #endif
     }
     else if (auto l = any.As<score::json::List>(); l.has_value()) {
         KvsValue::Array arr;

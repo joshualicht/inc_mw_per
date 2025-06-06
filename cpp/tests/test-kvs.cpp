@@ -94,6 +94,7 @@ TEST(kvs_TEST, checksum_adler32) {
 }
 
 TEST(kvs_TEST, kvsbuilder) {
+    
     cleanup_environment(); /* Make sure environment is clean before testing */
     /* Test the KvsBuilder constructor */
     {
@@ -125,6 +126,7 @@ TEST(kvs_TEST, kvsbuilder) {
 }
 
 TEST(kvs_TEST, constructor_move_assignment_operator) {
+    
     cleanup_environment(); /* Make sure environment is clean before testing */
     const std::uint32_t instance_b = 5;
     {
@@ -172,7 +174,7 @@ TEST(kvs_TEST, constructor_move_assignment_operator) {
     cleanup_environment();
 }
 
-TEST(kvs_TEST, open_normal) {
+TEST(kvs_TEST, open__normal) {
   
     prepare_enviromnnt();
     
@@ -202,7 +204,7 @@ TEST(kvs_TEST, open_normal) {
     cleanup_environment();
 }
 
-TEST(kvs_TEST, open_default_hash_corrupted) {
+TEST(kvs_TEST, open__default_hash_corrupted) {
   
     prepare_enviromnnt();
     
@@ -234,7 +236,7 @@ TEST(kvs_TEST, open_default_hash_corrupted) {
     cleanup_environment();
 }
 
-TEST(kvs_TEST, open_default_corrupted) {
+TEST(kvs_TEST, open__default_corrupted) {
   
     prepare_enviromnnt();
     system(("rm -rf " + default_prefix + ".hash").c_str());
@@ -261,7 +263,7 @@ TEST(kvs_TEST, open_default_corrupted) {
     cleanup_environment();
 }
 
-TEST(kvs_TEST, open_kvs_corrupted) {
+TEST(kvs_TEST, open__kvs_corrupted) {
   
     prepare_enviromnnt();
     system(("rm -rf " + default_prefix + ".hash").c_str());
@@ -301,7 +303,7 @@ TEST(kvs_TEST, open_kvs_corrupted) {
     cleanup_environment();
 }
 
-TEST(kvs_TEST, open_kvs_missing) {
+TEST(kvs_TEST, open__kvs_missing) {
   
     prepare_enviromnnt();
     system(("rm -rf " + default_prefix + ".hash").c_str());
@@ -325,7 +327,34 @@ TEST(kvs_TEST, open_kvs_missing) {
     cleanup_environment();
 }
 
+TEST(kvs_TEST, open_json) {
+    /* We only need to check the case, where parse_json_data fails, since all other cases are already tested by the open__xx tests*/
+    prepare_enviromnnt();
+
+    /* "invalid" is a keyword where an error is given back by the any_to_kvs function when compiled as unittest to simulate errorcase*/
+    const std::string kvs_json_invalid     = R"({"invalid" : "invalid"})";
+    system(("rm -rf " + kvs_prefix + ".json").c_str());
+    std::ofstream invalid_kvs_json_file(kvs_prefix + ".json");
+    invalid_kvs_json_file << kvs_json_invalid;
+    invalid_kvs_json_file.close();
+
+    uint32_t kvs_hash = calculate_hash_adler32(kvs_json_invalid);
+    std::ofstream kvs_hash_file(kvs_prefix + ".hash", std::ios::binary);
+    kvs_hash_file.put((kvs_hash >> 24) & 0xFF);
+    kvs_hash_file.put((kvs_hash >> 16) & 0xFF);
+    kvs_hash_file.put((kvs_hash >> 8)  & 0xFF);
+    kvs_hash_file.put(kvs_hash & 0xFF);
+    kvs_hash_file.close();
+
+    auto result = open_json(kvs_prefix, OpenJsonNeedFile::Optional);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::InvalidValueType);
+    
+    cleanup_environment();
+}
+
 TEST(kvs_TEST, flush_on_exit) {
+   
     prepare_enviromnnt();
     {
     auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
@@ -397,4 +426,113 @@ TEST(kvs_TEST, MessageFor) {
     score::result::ErrorCode invalid_code = static_cast<score::result::ErrorCode>(9999);
     EXPECT_EQ(my_error_domain.MessageFor(invalid_code), "Unknown Error!");
 
+}
+
+TEST(kvs_TEST, parse_json__data_types){
+    /* Valid Data */
+    //TODO Add 1/0 as Number (not Bool) after JSON parser issue solved  
+    constexpr const char* json_all_types = R"({
+        "number": 42.5,
+        "boolean": true,
+        "string": "hello",
+        "nullval": null,
+        "array": [2, "two", false],
+        "object": {"inner": "value"}
+    })";
+    auto result = parse_json_data(json_all_types);
+    ASSERT_TRUE(result);
+
+    const auto& map = result.value();
+
+    /* Number */
+    {
+        auto search = map.find("number");
+        ASSERT_NE(search, map.end());
+        const auto& val = search->second;
+        EXPECT_EQ(val.getType(), KvsValue::Type::Number);
+        EXPECT_DOUBLE_EQ(std::get<double>(val.getValue()), 42.5);
+    }
+
+    /* Boolean */
+    {
+        auto search = map.find("boolean");
+        ASSERT_NE(search, map.end());
+        const auto& val = search->second;
+        EXPECT_EQ(val.getType(), KvsValue::Type::Boolean);
+        EXPECT_EQ(std::get<bool>(val.getValue()), true);
+    }
+
+    /* String */
+    {
+        auto search = map.find("string");
+        ASSERT_NE(search, map.end());
+        const auto& val = search->second;
+        EXPECT_EQ(val.getType(), KvsValue::Type::String);
+        EXPECT_EQ(std::get<std::string>(val.getValue()), "hello");
+    }
+
+    /* Null */
+    {
+        auto search = map.find("nullval");
+        ASSERT_NE(search, map.end());
+        const auto& val = search->second;
+        EXPECT_EQ(val.getType(), KvsValue::Type::Null);
+        EXPECT_EQ(std::get<std::nullptr_t>(val.getValue()), nullptr);
+    }
+
+    // /* Array */
+    {
+        auto search = map.find("array");
+        ASSERT_NE(search, map.end());
+        const auto& val = search->second;
+        EXPECT_EQ(val.getType(), KvsValue::Type::Array);
+        const auto& arr = std::get<KvsValue::Array>(val.getValue());
+
+        ASSERT_EQ(arr.size(), 3u);
+        EXPECT_EQ(arr[0].getType(), KvsValue::Type::Number);
+        EXPECT_DOUBLE_EQ(std::get<double>(arr[0].getValue()), 2.0);
+
+        EXPECT_EQ(arr[1].getType(), KvsValue::Type::String);
+        EXPECT_EQ(std::get<std::string>(arr[1].getValue()), "two");
+
+        EXPECT_EQ(arr[2].getType(), KvsValue::Type::Boolean);
+        EXPECT_EQ(std::get<bool>(arr[2].getValue()), false);
+    }
+
+    /* Object */
+    {
+        auto search = map.find("object");
+        ASSERT_NE(search, map.end());
+        const auto& val = search->second;
+        EXPECT_EQ(val.getType(), KvsValue::Type::Object);
+        const auto& obj = std::get<KvsValue::Object>(val.getValue());
+
+        auto inner = obj.find("inner");
+        ASSERT_NE(inner, obj.end());
+        EXPECT_EQ(inner->second.getType(), KvsValue::Type::String);
+        EXPECT_EQ(std::get<std::string>(inner->second.getValue()), "value");
+    }
+}
+
+TEST(kvs_TEST, parse_json__data_error_handling){
+    //TODO Add 1/0 as Number (not Bool) after JSON parser issue solved 
+
+    /* Invalid Data */
+    constexpr const char* invalid_json = R"({invalid_json})";
+    auto result = parse_json_data(invalid_json);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::JsonParserError);
+
+    /* Data is not an Object */
+    constexpr const char* json_array = R"(["a", "b", "c"])";
+    result = parse_json_data(json_array);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::JsonParserError);
+
+    /* any_to_kvsvalue error */
+    /* "invalid" is a keyword where an error is given back by the any_to_kvs function when compiled as unittest to simulate errorcase*/
+    constexpr const char* invalid_kvsvalue_type = R"({"invalid" : "invalid"})";
+    result = parse_json_data(invalid_kvsvalue_type);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::InvalidValueType);
 }
