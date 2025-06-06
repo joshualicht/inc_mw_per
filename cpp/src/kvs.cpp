@@ -1,4 +1,5 @@
 #include "kvs.hpp"
+#include "internal/kvs_helper.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -249,6 +250,9 @@ std::string_view MyErrorDomain::MessageFor(score::result::ErrorCode const& code)
         case MyErrorCode::KeyNotFound:
             msg = "Key not found";
             break;
+        case MyErrorCode::KeyDefaultNotFound:
+            msg = "Key default value not found";
+            break;
         case MyErrorCode::SerializationFailed:
             msg = "Serialization failed";
             break;
@@ -260,6 +264,9 @@ std::string_view MyErrorDomain::MessageFor(score::result::ErrorCode const& code)
             break;
         case MyErrorCode::MutexLockFailed:
             msg = "Mutex failed";
+            break;
+        case MyErrorCode::InvalidValueType:
+            msg = "Invalid value type";
             break;
         default:
             msg = "Unknown Error!";
@@ -341,6 +348,7 @@ Kvs& Kvs::operator=(Kvs&& other) noexcept
             kvs.clear();
         }
         default_values.clear();
+        filename_prefix = std::move(other.filename_prefix);
         
         /* Disable flush in source to avoid double flush on destruction */
         bool flag = other.flush_on_exit.load(std::memory_order_relaxed);
@@ -445,7 +453,7 @@ score::Result<std::unordered_map<string, KvsValue>> open_json(const string& pref
     }
     
     /* Parse JSON Data */
-    if(!error){
+    if((!error) && (!new_kvs)){
         auto parse_res = parse_json_data(data);
         if (!parse_res) {
             cerr << "error: parsing JSON data failed" << endl;
