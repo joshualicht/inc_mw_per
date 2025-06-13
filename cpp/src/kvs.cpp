@@ -1,17 +1,28 @@
-#include "kvs.hpp"
+/********************************************************************************
+ * Copyright (c) 2025 Contributors to the Eclipse Foundation
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information regarding copyright ownership.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Apache License Version 2.0 which is available at
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ ********************************************************************************/
+
+ #include "kvs.hpp"
 #include "internal/kvs_helper.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include "score/json/json_parser.h"
-#include "score/json/json_writer.h"
-#include "score/filesystem/filesystem.h"
 
-using namespace std;
 
 //TODO Default Value Handling TBD
 //TODO Add Score Logging
 //TODO Replace std libs with baselibs
+
+using namespace std;
 
 /*********************** Hash Functions *********************/
 /*Adler 32 checksum algorithm*/ 
@@ -92,13 +103,6 @@ score::Result<KvsValue> any_to_kvsvalue(const score::json::Any& any){
     }
     else if (auto s = any.As<std::string>(); s.has_value()) {
         result = KvsValue(s.value().get());
-
-        /* If Unittest is defined, we can simulate any_to_kvsvalue error here */
-        #ifdef UNITTEST
-            if( s.value().get() == "invalid") {
-                result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
-            }
-        #endif
     }
     else if (auto l = any.As<score::json::List>(); l.has_value()) {
         KvsValue::Array arr;
@@ -580,8 +584,8 @@ score::Result<KvsValue> Kvs::get_value(const std::string_view key) {
         if (search_kvs != kvs.end()) {
             result = search_kvs->second;
         } else {
-            auto search_default = kvs.find(std::string(key));
-            if (search_default != kvs.end()) {
+            auto search_default = default_values.find(std::string(key));
+            if (search_default != default_values.end()) {
                 result = search_default->second;
             } else {
                 result = score::MakeUnexpected(MyErrorCode::KeyNotFound);
@@ -625,14 +629,10 @@ score::ResultBlank Kvs::reset_key(const std::string_view key)
         else {
             auto search_kvs = kvs.find(std::string(key));
             if (search_kvs != kvs.end()) {
-                const auto erased = kvs.erase(std::string(key));
-                if (erased > 0U) {
-                    result = score::ResultBlank{};
-                } else {
-                    result = score::MakeUnexpected(MyErrorCode::UnmappedError);
-                }
+                (void)kvs.erase(std::string(key)); /* Return Value ignored, since its already secured, that the key exists*/
+                result = score::ResultBlank{};
             }else{
-                result = score::MakeUnexpected(MyErrorCode::KeyDefaultNotFound);
+                result = score::ResultBlank{};
             }
         }
     }
@@ -716,7 +716,7 @@ score::ResultBlank writeJsonData(const std::string& filename_prefix, const std::
         }
     } else {
         std::cerr << "Failed to create directory for KVS file '" << fn_json << "'\n";
-        result = score::MakeUnexpected(MyErrorCode::PhysicalStorageFailure);
+        result = score::MakeUnexpected(MyErrorCode::UnmappedError); /* Unmapped, because this error shall not occur on runtime but only in unittests since the argument is passed by a const variable*/
     }
 
     return result;
@@ -758,7 +758,8 @@ score::ResultBlank Kvs::flush() {
             result = score::MakeUnexpected(MyErrorCode::JsonGeneratorError);
         }else{
             /* Rotate Snapshots */
-            if (auto rotate_result = snapshot_rotate(); !rotate_result) {
+            auto rotate_result = snapshot_rotate();
+            if (!rotate_result) {
                 result = rotate_result;
             }else{
                 /* Write JSON Data */
@@ -803,7 +804,8 @@ score::ResultBlank Kvs::snapshot_rotate() {
 
             cout << "rotating: " << snap_old << " -> " << snap_new << endl;
             /* Rename hash */
-            if (std::rename(hash_old.c_str(), hash_new.c_str()) != 0) {
+            int32_t hash_rename = std::rename(hash_old.c_str(), hash_new.c_str());
+            if (0 != hash_rename) {
                 if (errno != ENOENT) {
                     error = true;
                     cout << "error: could not rename hash file " << snap_old << ". Rename Errorcode " << errno << endl;
@@ -812,7 +814,8 @@ score::ResultBlank Kvs::snapshot_rotate() {
             }
             if(!error){
                 /* Rename snapshot */
-                if (std::rename(snap_old.c_str(), snap_new.c_str()) != 0) {
+                int32_t snap_rename = std::rename(snap_old.c_str(), snap_new.c_str());
+                if (0 != snap_rename) {
                     if (errno != ENOENT) {
                         error = true;
                         cout << "error: could not rename snapshot file " << snap_old << ". Rename Errorcode " << errno << endl;
@@ -839,7 +842,7 @@ score::ResultBlank Kvs::snapshot_restore(const SnapshotId& snapshot_id) {
     score::ResultBlank result = score::MakeUnexpected(MyErrorCode::UnmappedError);
     std::unique_lock<std::mutex> lock(kvs_mutex, std::try_to_lock);
     if (lock.owns_lock()) {
-        /* fail if the snapshot ID is the current KVS */
+        /* Fail if the snapshot ID is the current KVS */
         if (0 == snapshot_id.id) {
             result = score::MakeUnexpected(MyErrorCode::InvalidSnapshotId);
         }else if (snapshot_count() < snapshot_id.id) {

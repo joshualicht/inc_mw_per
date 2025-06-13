@@ -1,13 +1,50 @@
-#include <gtest/gtest.h>
+/********************************************************************************
+ * Copyright (c) 2025 Contributors to the Eclipse Foundation
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information regarding copyright ownership.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Apache License Version 2.0 which is available at
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ ********************************************************************************/
+
+ #include <gtest/gtest.h>
 #include <cstdlib>
 #include <cstdio>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <fstream>
 #include <string>
+#include <filesystem>
+
+/* Change Private Members and final to public to allow access to member variables and derive from kvsvalue in unittests*/
+#define private public
+#define final 
 #include "kvs.hpp"
+#undef private
+#undef final
 #include "internal/kvs_helper.h"
-#include "score/filesystem/filesystem.h"
+
+/* Mock KvsValue for testing purposes */
+class BrokenKvsValue : public KvsValue {
+public:
+    BrokenKvsValue() : KvsValue(nullptr) {
+        /* Intentionally break the type by assigning an invalid value */
+        *(Type*)&this->type = static_cast<Type>(999);
+    }
+};
+
+/* Control Flags from stubs/json_writer_override.cpp*/
+namespace score {
+namespace json {
+  extern bool g_JsonWriterShouldFail;
+  extern std::string g_JsonWriterReturnValue;
+}
+}
+
+//TODO create possiblity to test any to kvsvalue or exclude lcov lines 
 
 /* Test Environment Setup - Standard Variables*/
 const std::uint32_t instance = 123;
@@ -17,7 +54,8 @@ const std::string base_dir = "./data_folder";
 const std::string data_dir = base_dir + "/" + process_name;
 const std::string default_prefix = data_dir + "/kvs_"+std::to_string(instance)+"_default";
 const std::string kvs_prefix     = data_dir + "/kvs_"+std::to_string(instance)+"_0";
-const std::string default_json = R"({ "default": 1 })";
+const std::string filename_prefix = data_dir + "/kvs_"+std::to_string(instance);
+const std::string default_json = R"({ "default": 5 })";
 const std::string kvs_json     = R"({ "kvs": 2 })";
 
 uint32_t adler32(const std::string& data) {
@@ -30,14 +68,16 @@ uint32_t adler32(const std::string& data) {
     return (b << 16) | a;
 }
 
-bool file_exists(const std::string& path) {
-    struct stat buffer;
-    return stat(path.c_str(), &buffer) == 0;
-}
-
 void cleanup_environment() {
     /* Cleanup the test environment */
-    system(("rm -rf " + base_dir).c_str());
+    if (std::filesystem::exists(base_dir)) {
+        for (auto& p : std::filesystem::recursive_directory_iterator(base_dir)) {
+            std::filesystem::permissions(p,
+                std::filesystem::perms::owner_all | std::filesystem::perms::group_all | std::filesystem::perms::others_all,
+                std::filesystem::perm_options::replace);
+        }
+        std::filesystem::remove_all(base_dir);
+    }
 }
 
 void prepare_enviromnnt(){
@@ -53,8 +93,8 @@ void prepare_enviromnnt(){
     kvs_json_file << kvs_json;
     kvs_json_file.close();
 
-    uint32_t default_hash = calculate_hash_adler32(default_json);
-    uint32_t kvs_hash = calculate_hash_adler32(kvs_json);
+    uint32_t default_hash = adler32(default_json);
+    uint32_t kvs_hash = adler32(kvs_json);
 
     std::ofstream default_hash_file(default_prefix + ".hash", std::ios::binary);
     default_hash_file.put((default_hash >> 24) & 0xFF);
@@ -93,301 +133,136 @@ TEST(kvs_TEST, checksum_adler32) {
 
 }
 
-TEST(kvs_TEST, kvsbuilder) {
+TEST(kvs_Test, any_to_kvsvalue) {
     
-    cleanup_environment(); /* Make sure environment is clean before testing */
-    /* Test the KvsBuilder constructor */
-    {
-    KvsBuilder builder(std::string("kvsbuilder"), InstanceId(5));
-    auto result = builder.build();
+    score::json::Any any_bool(true);
+    auto result = any_to_kvsvalue(any_bool);
     ASSERT_TRUE(result);
-    }
-    /* Check Instance ID and process_name through Filename*/
-    EXPECT_TRUE(file_exists(base_dir + "/kvsbuilder/kvs_5_0.json"));
 
-    /* Check Required Flags (Optional is default) -> In this testcase are no kvs files available*/
-    {
-        KvsBuilder builder(std::string(process_name), instance_id);
-        builder.need_defaults_flag(true);
-        auto result = builder.build();
-        ASSERT_FALSE(result);
-        EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsFileReadError);
-    }
+    EXPECT_EQ(result.value().getType(), KvsValue::Type::Boolean);
 
-    {
-        KvsBuilder builder(std::string(process_name), instance_id);
-        builder.need_kvs_flag(true);
-        auto result = builder.build();
-        ASSERT_FALSE(result);
-        EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsFileReadError);
-    }
-    
-    cleanup_environment();
+    score::json::Number num(1.1);
+    score::json::Any any_num(num);
+
+    result = any_to_kvsvalue(any_num);
+    ASSERT_TRUE(result);
+
+    EXPECT_EQ(result.value().getType(), KvsValue::Type::Number);
+
+    std::string str = "hello";
+    score::json::Any any_string(str);
+
+    result = any_to_kvsvalue(any_string);
+    ASSERT_TRUE(result);
+
+    EXPECT_EQ(result.value().getType(), KvsValue::Type::String);
+
+    score::json::Any any_null((score::json::Null()));
+
+    result = any_to_kvsvalue(any_null);
+    ASSERT_TRUE(result);
+
+    EXPECT_EQ(result.value().getType(), KvsValue::Type::Null);
+
+    score::json::List list;
+    list.push_back(score::json::Any(true));
+    list.push_back(score::json::Any(score::json::Number(1.1)));
+    list.push_back(score::json::Any(std::string("hello")));
+
+    score::json::Any any_list(std::move(list));
+
+    result = any_to_kvsvalue(any_list);
+    ASSERT_TRUE(result);
+
+    EXPECT_EQ(result.value().getType(), KvsValue::Type::Array);
+
+    score::json::Object obj;
+    obj.emplace("flag", score::json::Any(true));
+    obj.emplace("count", score::json::Any(score::json::Number(42.0)));
+
+    score::json::Any any_obj(std::move(obj));
+
+    result = any_to_kvsvalue(any_obj);
+    ASSERT_TRUE(result);
+
+    EXPECT_EQ(result.value().getType(), KvsValue::Type::Object);
 }
 
-TEST(kvs_TEST, constructor_move_assignment_operator) {
+TEST(kvs_Test, kvsvalue_to_any){
     
-    cleanup_environment(); /* Make sure environment is clean before testing */
-    const std::uint32_t instance_b = 5;
-    {
-        /* create object A with initial data */
-        auto result_a = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-        ASSERT_TRUE(result_a);
-        Kvs kvs_a = std::move(result_a.value());
-        kvs_a.set_flush_on_exit(true);
+    KvsValue null_val(nullptr);
+    auto result = kvsvalue_to_any(null_val);
+    ASSERT_TRUE(result);
 
-        /* create object B with different data */
-        auto result_b = Kvs::open(std::string(process_name), InstanceId(instance_b), OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-        ASSERT_TRUE(result_b);
-        Kvs kvs_b = std::move(result_b.value());
-        kvs_b.set_flush_on_exit(false);
+    EXPECT_TRUE(result.value().As<score::json::Null>().has_value());
 
-        /* Move assignment operator */
-        kvs_a = std::move(kvs_b);
+    KvsValue bool_val(true);
 
-        /* Ignore Compiler Warning "Wself-move" for GCC and CLANG*/
-        #if defined(__clang__) 
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Wself-move"
-        #elif defined(__GNUC__)
-        #pragma GCC diagnostic push
-        #pragma GCC diagnostic ignored "-Wself-move"
-        #endif
-        kvs_a = std::move(kvs_a);  /* Intentional self-move */
-        #if defined(__clang__)
-        #pragma clang diagnostic pop
-        #elif defined(__GNUC__)
-        #pragma GCC diagnostic pop
-        #endif
+    result = kvsvalue_to_any(bool_val);
+    ASSERT_TRUE(result);
 
-        kvs_a.flush();
-    }
-    /*Expectations:
-    - kvs_a now contains data from the former kvs_b
-    - kvs_b should overwrite kvs_a's data -> no data from kvs_a should be flushed
-    - flush_on_exit of kvs_a should be false (was copied) -> only one snapshot through mnaual flush expected */
+    EXPECT_TRUE(result.value().As<bool>().has_value());
 
-    EXPECT_TRUE(file_exists(data_dir + "/kvs_"+std::to_string(instance_b)+"_0" + ".json"));
-    EXPECT_FALSE(file_exists(data_dir + "/kvs_"+std::to_string(instance_b)+"_1" + ".json"));
-    EXPECT_FALSE(file_exists(data_dir + "/kvs_"+std::to_string(instance)+"_0" + ".json"));
+    KvsValue number_val(1.1);
 
-    cleanup_environment();
-}
+    result = kvsvalue_to_any(number_val);
+    ASSERT_TRUE(result);
 
-TEST(kvs_TEST, open__normal) {
-  
-    prepare_enviromnnt();
+    EXPECT_TRUE(result.value().As<score::json::Number>().has_value());
+
+    std::string str = "hello";
+    KvsValue string_val(str);
+
+    result = kvsvalue_to_any(string_val);
+    ASSERT_TRUE(result);
+
+    EXPECT_TRUE(result.value().As<std::string>().has_value());
+
+    KvsValue::Array array;
+    array.push_back(KvsValue(true));
+    array.push_back(KvsValue(1.1));
+    array.push_back(KvsValue(std::string("hello")));
+
+    KvsValue array_val(array);
+    result = kvsvalue_to_any(array_val);
+    ASSERT_TRUE(result);
+
+    const auto& list = result.value().As<score::json::List>().value().get();
+    EXPECT_TRUE(list[0].As<bool>().has_value());
+
+    KvsValue::Object obj;
+    obj.emplace("flag", KvsValue(true));
+    obj.emplace("count", KvsValue(42.0));
+
+    KvsValue obj_val(obj);
+    result = kvsvalue_to_any(obj_val);
+    ASSERT_TRUE(result);
     
-    /* --------------------Testcases-------------------- 
-    -> open with open_json with valid JSON, Default and Hash files */
+    const auto& object = result.value().As<score::json::Object>().value().get();
+    EXPECT_TRUE(object.at("flag").As<bool>().has_value());
 
-    /* OpenNeedDefaults::Required, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON existing, Valid Default Hash */
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-    EXPECT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-    
-    /* OpenNeedDefaults::Required, OpenNeedKvs::Optional, JSON existing, Valid Hash existing, Default JSON existing, Valid Default Hash */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Optional);
-    EXPECT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON existing, Valid Default Hash */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Required);
-    EXPECT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Optional, JSON existing, Valid Hash existing, Default JSON existing, Valid Default Hash */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-    EXPECT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-
-    cleanup_environment();
-}
-
-TEST(kvs_TEST, open__default_hash_corrupted) {
-  
-    prepare_enviromnnt();
-    
-    /* --------------------Testcases-------------------- 
-    -> open with open_json with valid JSON, Default but Default Hash corrupted or missing */
-
-    /* OpenNeedDefaults::Required, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON existing, Default Hash corrupted */
-    std::fstream corrupt_default_hash_file(default_prefix + ".hash", std::ios::in | std::ios::out | std::ios::binary);
-    corrupt_default_hash_file.seekp(0);
-    corrupt_default_hash_file.put(0xFF);
-    corrupt_default_hash_file.close();
-
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::ValidationFailed);
-
-    /* OpenNeedDefaults::Required, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON existing, Default Hash not existing*/
-    system(("rm -rf " + default_prefix + ".hash").c_str());
-
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsHashFileReadError);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON existing, Default Hash not existing*/
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsHashFileReadError);
-
-    cleanup_environment();
-}
-
-TEST(kvs_TEST, open__default_corrupted) {
-  
-    prepare_enviromnnt();
-    system(("rm -rf " + default_prefix + ".hash").c_str());
-    system(("rm -rf " + default_prefix + ".json").c_str());
-    
-    /* --------------------Testcases-------------------- 
-    -> open with open_json with valid JSON but Default KVS file (and default hash) is missing */
-
-    /* OpenNeedDefaults::Required, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON not existing, Default Hash not existing */
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsFileReadError);
-
-    /* OpenNeedDefaults::Required, OpenNeedKvs::Optional, JSON existing, Valid Hash existing, Default JSON not existing, Default Hash not existing */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Optional);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsFileReadError);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Required, JSON existing, Valid Hash existing, Default JSON not existing, Default Hash not existing */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Required);
-    EXPECT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-
-    cleanup_environment();
-}
-
-TEST(kvs_TEST, open__kvs_corrupted) {
-  
-    prepare_enviromnnt();
-    system(("rm -rf " + default_prefix + ".hash").c_str());
-    system(("rm -rf " + default_prefix + ".json").c_str());
-    
-    /* --------------------Testcases-------------------- 
-    -> open with open_json with corrupted or missing KVS JSON Hash */
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Required, JSON existing, Hash corrupted, Default JSON not existing, Default Hash not existing */
-    std::fstream corrupt_hash_file(kvs_prefix + ".hash", std::ios::in | std::ios::out | std::ios::binary);
-    corrupt_hash_file.seekp(0);
-    corrupt_hash_file.put(0xFF);
-    corrupt_hash_file.close();
-    
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::ValidationFailed);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Optional, JSON existing, Hash corrupted, Default JSON not existing, Default Hash not existing */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::ValidationFailed);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Required, JSON existing, Hash not existing, Default JSON not existing, Default Hash not existing */
-    system(("rm -rf " + kvs_prefix + ".hash").c_str());
-    
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsHashFileReadError);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Optional, JSON existing, Hash not existing, Default JSON not existing, Default Hash not existing */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsHashFileReadError);
-
-
-    cleanup_environment();
-}
-
-TEST(kvs_TEST, open__kvs_missing) {
-  
-    prepare_enviromnnt();
-    system(("rm -rf " + default_prefix + ".hash").c_str());
-    system(("rm -rf " + default_prefix + ".json").c_str());
-    system(("rm -rf " + kvs_prefix + ".hash").c_str());
-    system(("rm -rf " + kvs_prefix + ".json").c_str());
-    
-    /* --------------------Testcases-------------------- 
-    -> open with open_json with missing KVS JSON */
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Required, JSON not existing, Valid Hash existing, Default JSON not existing, Default Hash not existing */
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Required);
-    ASSERT_FALSE(result);
-    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsFileReadError);
-
-    /* OpenNeedDefaults::Optional, OpenNeedKvs::Optional, JSON not existing, Valid Hash existing, Default JSON not existing, Default Hash not existing */
-    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
-    EXPECT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-
-    cleanup_environment();
-}
-
-TEST(kvs_TEST, open_json) {
-    /* We only need to check the case, where parse_json_data fails, since all other cases are already tested by the open__xx tests*/
-    prepare_enviromnnt();
-
-    /* "invalid" is a keyword where an error is given back by the any_to_kvs function when compiled as unittest to simulate errorcase*/
-    const std::string kvs_json_invalid     = R"({"invalid" : "invalid"})";
-    system(("rm -rf " + kvs_prefix + ".json").c_str());
-    std::ofstream invalid_kvs_json_file(kvs_prefix + ".json");
-    invalid_kvs_json_file << kvs_json_invalid;
-    invalid_kvs_json_file.close();
-
-    uint32_t kvs_hash = calculate_hash_adler32(kvs_json_invalid);
-    std::ofstream kvs_hash_file(kvs_prefix + ".hash", std::ios::binary);
-    kvs_hash_file.put((kvs_hash >> 24) & 0xFF);
-    kvs_hash_file.put((kvs_hash >> 16) & 0xFF);
-    kvs_hash_file.put((kvs_hash >> 8)  & 0xFF);
-    kvs_hash_file.put(kvs_hash & 0xFF);
-    kvs_hash_file.close();
-
-    auto result = open_json(kvs_prefix, OpenJsonNeedFile::Optional);
-    EXPECT_FALSE(result);
+    /* InvalidType */
+    BrokenKvsValue invalid;
+    result = kvsvalue_to_any(invalid);
+    EXPECT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), MyErrorCode::InvalidValueType);
-    
-    cleanup_environment();
-}
 
-TEST(kvs_TEST, flush_on_exit) {
-   
-    prepare_enviromnnt();
-    {
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-    ASSERT_TRUE(result);
-    result.value().set_flush_on_exit(false);
-    }
-    /* check if Snapshot 1 exists after destructor*/
-    ASSERT_FALSE(file_exists((data_dir + "/kvs_"+std::to_string(instance)+"_1" + ".json").c_str()));
+    std::vector<KvsValue> elements;
+    elements.emplace_back(42.0);
+    elements.emplace_back(BrokenKvsValue());
+    KvsValue array_invalid(elements);
 
-    {
-    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-    ASSERT_TRUE(result);
-    result.value().set_flush_on_exit(true);
-    }
-    /* check if Snapshot 1 exists after destructor*/
-    ASSERT_TRUE(file_exists((data_dir + "/kvs_"+std::to_string(instance)+"_1" + ".json").c_str()));
+    result = kvsvalue_to_any(array_invalid);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), MyErrorCode::InvalidValueType);
 
-    cleanup_environment();
-
-}
-
-TEST(kvs_TEST, snapshot_count){
-    prepare_enviromnnt();
-    for(uint32_t i = 0; i <= KVS_MAX_SNAPSHOTS; i++){
-        {
-        auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
-        ASSERT_TRUE(result);
-        EXPECT_EQ(result.value().snapshot_count(), i);
-        result.value().set_flush_on_exit(true);
-        }
-    }
-
-    cleanup_environment();
+    std::unordered_map<std::string, KvsValue> obj_invalid;
+    obj_invalid.emplace("flag", KvsValue(true));
+    obj_invalid.emplace("broken", BrokenKvsValue());
+    KvsValue object_invalid(obj_invalid);
+    result = kvsvalue_to_any(object_invalid);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), MyErrorCode::InvalidValueType);
 }
 
 TEST(kvs_TEST, MessageFor) {
@@ -428,9 +303,111 @@ TEST(kvs_TEST, MessageFor) {
 
 }
 
+TEST(kvs_TEST, kvsbuilder) {
+    /* This test also checks the kvs open function with the KvsBuilder */
+    
+    /* Test the KvsBuilder constructor */
+    KvsBuilder builder(std::string("kvsbuilder"), instance_id);
+    EXPECT_EQ(builder.instance_id.id, instance_id.id);
+    EXPECT_EQ(builder.need_defaults, false);
+    EXPECT_EQ(builder.need_kvs, false);
+    EXPECT_EQ(builder.process_name, "kvsbuilder");
+
+    /* Test the KvsBuilder methods */
+    builder.need_defaults_flag(true);
+    EXPECT_EQ(builder.need_defaults, true);
+    builder.need_kvs_flag(true);
+    EXPECT_EQ(builder.need_kvs, true);
+
+    /* Test the KvsBuilder build method */
+    /* We want to check, if OpenNeedDefaults::Required and OpenNeedKvs::Required is passed correctly
+    open() function should return an error, since the files are not available */
+    auto result_build = builder.build();
+    ASSERT_FALSE(result_build);
+    EXPECT_EQ(static_cast<MyErrorCode>(*result_build.error()), MyErrorCode::KvsFileReadError); /* This error occurs in open_json and is passed through open()*/
+    builder.need_defaults_flag(false);
+    result_build = builder.build();
+    ASSERT_FALSE(result_build);
+    EXPECT_EQ(static_cast<MyErrorCode>(*result_build.error()), MyErrorCode::KvsFileReadError); /* This error occurs in open_json and is passed through open()*/
+    builder.need_kvs_flag(false);
+    result_build = builder.build();
+    EXPECT_TRUE(result_build);
+    result_build.value().flush_on_exit = false;
+    std::string expected_filename_prefix = base_dir + "/kvsbuilder/kvs_"+std::to_string(instance_id.id);
+    EXPECT_EQ(result_build.value().filename_prefix, expected_filename_prefix);
+
+}
+
+TEST(kvs_TEST, move_constructor) {
+    /* Also checks set_flush_on_exit */
+    const std::uint32_t instance_b = 5;
+    
+    /* create object A */
+    auto result_a = Kvs::open(std::string(process_name), InstanceId(instance_b), OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result_a);
+    Kvs kvs_a = std::move(result_a.value());
+    kvs_a.flush_on_exit = false;
+
+    /* create object B */
+    auto result_b = Kvs::open(std::string(process_name), instance_id , OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result_b);
+    Kvs kvs_b = std::move(result_b.value());
+    kvs_a.flush_on_exit = true;
+
+
+    /* Create Test Data*/
+    kvs_b.kvs.insert({ "test_kvs", KvsValue(42.0) });
+    kvs_b.default_values.insert({ "test_default", KvsValue(true) });
+
+    /* Move assignment operator */
+    kvs_a = std::move(kvs_b);
+
+    /* Ignore Compiler Warning "Wself-move" for GCC and CLANG*/
+    #if defined(__clang__) 
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wself-move"
+    #elif defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wself-move"
+    #endif
+    kvs_a = std::move(kvs_a);  /* Intentional self-move */
+    #if defined(__clang__)
+    #pragma clang diagnostic pop
+    #elif defined(__GNUC__)
+    #pragma GCC diagnostic pop
+    #endif
+
+    
+    /*Expectations:
+    - kvs_a now contains data from the former kvs_b (default JSON data)
+    - flush_on_exit of kvs_a should be true (was copied) -> flush_on_exit of kvs_b MUST be false */
+
+    EXPECT_EQ(kvs_a.flush_on_exit, true);
+    ASSERT_EQ(kvs_b.flush_on_exit, false);
+
+    EXPECT_EQ(kvs_a.filename_prefix, data_dir + "/kvs_"+std::to_string(instance));
+
+    EXPECT_TRUE(kvs_a.kvs.count("test_kvs"));
+    EXPECT_TRUE(kvs_a.default_values.count("test_default"));
+
+    const auto& val = kvs_a.kvs.at("test_kvs");
+    EXPECT_EQ(val.getType(), KvsValue::Type::Number);
+    EXPECT_EQ(std::get<double>(val.getValue()), 42.0);
+
+    const auto& def = kvs_a.default_values.at("test_default");
+    EXPECT_EQ(def.getType(), KvsValue::Type::Boolean);
+    EXPECT_EQ(std::get<bool>(def.getValue()), true);
+
+    EXPECT_TRUE(kvs_b.kvs.empty());
+    EXPECT_TRUE(kvs_b.default_values.empty());
+
+    kvs_a.flush_on_exit = false;
+    cleanup_environment();
+}
+
 TEST(kvs_TEST, parse_json__data_types){
-    /* Valid Data */
-    //TODO Add 1/0 as Number (not Bool) after JSON parser issue solved  
+    //TODO add 0/1 false/true when json parser library is fixed
+    /* Valid Data */  
     constexpr const char* json_all_types = R"({
         "number": 42.5,
         "boolean": true,
@@ -480,7 +457,7 @@ TEST(kvs_TEST, parse_json__data_types){
         EXPECT_EQ(std::get<std::nullptr_t>(val.getValue()), nullptr);
     }
 
-    // /* Array */
+    /* Array */
     {
         auto search = map.find("array");
         ASSERT_NE(search, map.end());
@@ -515,7 +492,6 @@ TEST(kvs_TEST, parse_json__data_types){
 }
 
 TEST(kvs_TEST, parse_json__data_error_handling){
-    //TODO Add 1/0 as Number (not Bool) after JSON parser issue solved 
 
     /* Invalid Data */
     constexpr const char* invalid_json = R"({invalid_json})";
@@ -529,10 +505,709 @@ TEST(kvs_TEST, parse_json__data_error_handling){
     EXPECT_FALSE(result);
     EXPECT_EQ(result.error(), MyErrorCode::JsonParserError);
 
-    /* any_to_kvsvalue error */
-    /* "invalid" is a keyword where an error is given back by the any_to_kvs function when compiled as unittest to simulate errorcase*/
-    constexpr const char* invalid_kvsvalue_type = R"({"invalid" : "invalid"})";
-    result = parse_json_data(invalid_kvsvalue_type);
-    EXPECT_FALSE(result);
-    EXPECT_EQ(result.error(), MyErrorCode::InvalidValueType);
+    /* TODO any_to_kvsvalue error */
 }
+
+TEST(kvs_TEST, open_json) {
+  
+    prepare_enviromnnt();
+
+    auto result = open_json(kvs_prefix , OpenJsonNeedFile::Required);
+    ASSERT_TRUE(result);
+    result = open_json(kvs_prefix, OpenJsonNeedFile::Optional);
+    ASSERT_TRUE(result);
+
+    /* JSON Data invalid */
+    std::string invalid_json = "{ invalid json }";
+    std::ofstream invalid_json_file(kvs_prefix + ".json");
+    invalid_json_file << invalid_json;
+    invalid_json_file.close();
+    uint32_t kvs_hash = adler32(invalid_json); /* Still valid Hash*/
+    std::ofstream kvs_hash_file(kvs_prefix + ".hash", std::ios::binary);
+    kvs_hash_file.put((kvs_hash >> 24) & 0xFF);
+    kvs_hash_file.put((kvs_hash >> 16) & 0xFF);
+    kvs_hash_file.put((kvs_hash >> 8)  & 0xFF);
+    kvs_hash_file.put(kvs_hash & 0xFF);
+    kvs_hash_file.close();
+    result = open_json(kvs_prefix, OpenJsonNeedFile::Required);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::JsonParserError); /* Errorcode passed by parse json function*/
+
+    /* Hash corrupted */
+    std::fstream corrupt_default_hash_file(kvs_prefix + ".hash", std::ios::in | std::ios::out | std::ios::binary);
+    corrupt_default_hash_file.seekp(0);
+    corrupt_default_hash_file.put(0xFF);
+    corrupt_default_hash_file.close();
+
+    result = open_json(kvs_prefix, OpenJsonNeedFile::Optional);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::ValidationFailed);
+
+    /* Hash not existing */
+    system(("rm -rf " + kvs_prefix + ".hash").c_str());
+    result = open_json(kvs_prefix, OpenJsonNeedFile::Optional);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsHashFileReadError);
+
+    /* JSON not existing */
+    system(("rm -rf " + kvs_prefix + ".json").c_str());
+    result = open_json(kvs_prefix, OpenJsonNeedFile::Required);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*result.error()), MyErrorCode::KvsFileReadError);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, set_flush_on_exit) {
+   
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = true;
+    result.value().set_flush_on_exit(false);
+    ASSERT_FALSE(result.value().flush_on_exit);
+    result.value().set_flush_on_exit(true);
+    ASSERT_TRUE(result.value().flush_on_exit);
+
+    result.value().flush_on_exit = false;
+    cleanup_environment();
+
+}
+
+TEST(kvs_TEST, reset){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_FALSE(result.value().kvs.empty());
+
+    /* Reset KVS */
+    auto reset_result = result.value().reset();
+    EXPECT_TRUE(reset_result);
+    EXPECT_TRUE(result.value().kvs.empty());
+    
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    reset_result = result.value().reset();
+    EXPECT_FALSE(reset_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*reset_result.error()), MyErrorCode::MutexLockFailed);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, get_all_keys){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_FALSE(result.value().kvs.empty());
+    
+    /* Check if all keys are returned */
+    auto get_all_keys_result = result.value().get_all_keys();
+    ASSERT_TRUE(get_all_keys_result);
+    EXPECT_FALSE(get_all_keys_result.value().empty());
+    auto search = std::find(get_all_keys_result.value().begin(), get_all_keys_result.value().end(), "kvs");
+    EXPECT_TRUE(search != get_all_keys_result.value().end());
+
+    /* Check if empty keys are returned */
+    result.value().kvs.clear();
+    get_all_keys_result = result.value().get_all_keys();
+    EXPECT_TRUE(get_all_keys_result.value().empty());
+
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    get_all_keys_result = result.value().get_all_keys();
+    EXPECT_FALSE(get_all_keys_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*get_all_keys_result.error()), MyErrorCode::MutexLockFailed);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, key_exists){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_FALSE(result.value().kvs.empty());
+    
+    /* Check if key exists */
+    auto exists_result = result.value().key_exists("kvs");
+    EXPECT_TRUE(exists_result);
+    EXPECT_TRUE(exists_result.value());
+    /* Check if non-existing key returns false */
+    exists_result = result.value().key_exists("non_existing_key");
+    EXPECT_TRUE(exists_result);
+    EXPECT_FALSE(exists_result.value());
+
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    exists_result = result.value().key_exists("kvs");
+    EXPECT_FALSE(exists_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*exists_result.error()), MyErrorCode::MutexLockFailed);
+    
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, get_value){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_FALSE(result.value().kvs.empty());
+    
+    /* Check if value is returned */
+    auto get_value_result = result.value().get_value("kvs");
+    ASSERT_TRUE(get_value_result);
+    EXPECT_EQ(get_value_result.value().getType(), KvsValue::Type::Number);
+    EXPECT_DOUBLE_EQ(std::get<double>(get_value_result.value().getValue()), 2.0);
+
+    /* Check if non-existing key returns error */
+    get_value_result = result.value().get_value("non_existing_key");
+    EXPECT_FALSE(get_value_result);
+    EXPECT_EQ(get_value_result.error(), MyErrorCode::KeyNotFound);
+
+    /* Check if default value is returned when no written key exists */
+    get_value_result = result.value().get_value("default");
+    ASSERT_TRUE(get_value_result);
+    EXPECT_EQ(get_value_result.value().getType(), KvsValue::Type::Number);
+    EXPECT_DOUBLE_EQ(std::get<double>(get_value_result.value().getValue()), 5.0);
+
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    get_value_result = result.value().get_value("kvs");
+    EXPECT_FALSE(get_value_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*get_value_result.error()), MyErrorCode::MutexLockFailed);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, get_default_value){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_FALSE(result.value().default_values.empty());
+    
+    /* Check if default value is returned */
+    auto get_def_value_result = result.value().get_default_value("default");
+    ASSERT_TRUE(get_def_value_result);
+    EXPECT_EQ(get_def_value_result.value().getType(), KvsValue::Type::Number);
+    EXPECT_DOUBLE_EQ(std::get<double>(get_def_value_result.value().getValue()), 5.0);
+
+    /* Check if non-existing key returns error */
+    get_def_value_result = result.value().get_default_value("non_existing_key");
+    EXPECT_FALSE(get_def_value_result);
+    EXPECT_EQ(get_def_value_result.error(), MyErrorCode::KeyNotFound);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, reset_key){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    ASSERT_TRUE(result.value().kvs.count("kvs"));
+    ASSERT_FALSE(result.value().default_values.count("kvs"));
+
+    /* Create default Value for "kvs"-key */
+    result.value().default_values.insert({ "kvs", KvsValue(42.0) }); 
+
+    /* Reset a key */
+    auto reset_key_result = result.value().reset_key("kvs");
+    EXPECT_TRUE(reset_key_result);
+    EXPECT_FALSE(result.value().kvs.count("kvs"));
+    EXPECT_TRUE(result.value().default_values.count("kvs"));
+
+    /* Reset a non-existing key */
+    reset_key_result = result.value().reset_key("non_existing_key");
+    EXPECT_FALSE(reset_key_result);
+    EXPECT_EQ(reset_key_result.error(), MyErrorCode::KeyDefaultNotFound);
+
+    /* Reset a key without default value */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    reset_key_result = result.value().reset_key("kvs");
+    EXPECT_FALSE(reset_key_result);
+    EXPECT_EQ(reset_key_result.error(), MyErrorCode::KeyDefaultNotFound);
+
+    /* Reset a non written key which has default value */
+    reset_key_result = result.value().reset_key("default");
+    EXPECT_TRUE(reset_key_result);
+
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    reset_key_result = result.value().reset_key("kvs");
+    EXPECT_FALSE(reset_key_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*reset_key_result.error()), MyErrorCode::MutexLockFailed);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, has_default_value){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_FALSE(result.value().default_values.empty());
+    
+    /* Check if default value exists */
+    auto has_default_result = result.value().has_default_value("default");
+    EXPECT_TRUE(has_default_result);
+    EXPECT_TRUE(has_default_result.value());
+
+    /* Check if non-existing key returns false */
+    has_default_result = result.value().has_default_value("non_existing_key");
+    EXPECT_TRUE(has_default_result);
+    EXPECT_FALSE(has_default_result.value());
+    
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, set_value){
+
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    
+    /* Set a new value */
+    auto set_value_result = result.value().set_value("new_key", KvsValue(3.14));
+    EXPECT_TRUE(set_value_result);
+    EXPECT_TRUE(result.value().kvs.count("new_key"));
+    EXPECT_EQ(result.value().kvs.at("new_key").getType(), KvsValue::Type::Number);
+    EXPECT_DOUBLE_EQ(std::get<double>(result.value().kvs.at("new_key").getValue()), 3.14);
+
+    /* Set a value with an existing key */
+    set_value_result = result.value().set_value("kvs", KvsValue(2.718));
+    EXPECT_TRUE(set_value_result);
+    EXPECT_EQ(result.value().kvs.at("kvs").getType(), KvsValue::Type::Number);
+    EXPECT_DOUBLE_EQ(std::get<double>(result.value().kvs.at("kvs").getValue()), 2.718);
+
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    set_value_result = result.value().set_value("new_key", KvsValue(3.0));
+    EXPECT_FALSE(set_value_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*set_value_result.error()), MyErrorCode::MutexLockFailed);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, remove_key){
+    
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Check Data existing */
+    EXPECT_TRUE(result.value().kvs.count("kvs"));
+    
+    /* Remove an existing key */
+    auto remove_key_result = result.value().remove_key("kvs");
+    EXPECT_TRUE(remove_key_result);
+    EXPECT_FALSE(result.value().kvs.count("kvs"));
+
+    /* Remove a non-existing key */
+    remove_key_result = result.value().remove_key("non_existing_key");
+    EXPECT_FALSE(remove_key_result);
+    EXPECT_EQ(remove_key_result.error(), MyErrorCode::KeyNotFound);
+
+    /* Mutex locked */
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Required, OpenNeedKvs::Required);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    remove_key_result = result.value().remove_key("kvs");
+    EXPECT_FALSE(remove_key_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*remove_key_result.error()), MyErrorCode::MutexLockFailed);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, writeJsonData__success){
+    
+    prepare_enviromnnt();
+    /* Test writing valid JSON data, also checks get_hash_bytes_adler32 and get_hash_bytes*/
+    constexpr const char* json_data = R"({
+        "key1": "value1",
+        "key2": 42,
+        "key3": true,
+        "key4": null
+    })";
+    system(("rm -rf " + kvs_prefix + ".json").c_str());
+    system(("rm -rf " + kvs_prefix + ".hash").c_str());
+    auto result = writeJsonData(filename_prefix, json_data);
+    EXPECT_TRUE(result);
+    /* Check if the file was created */
+    EXPECT_TRUE(std::filesystem::exists(kvs_prefix + ".json"));
+    EXPECT_TRUE(std::filesystem::exists(kvs_prefix + ".hash"));
+
+    /* Check if the contentis correct */
+    std::ifstream in_content(kvs_prefix + ".json", std::ios::binary);
+    std::string file_content((std::istreambuf_iterator<char>(in_content)), std::istreambuf_iterator<char>());
+    in_content.close();
+    EXPECT_EQ(file_content, json_data);
+        
+    std::ifstream in_hash(kvs_prefix + ".hash", std::ios::binary);
+    std::string hash_content((std::istreambuf_iterator<char>(in_hash)), std::istreambuf_iterator<char>());
+    in_hash.close();
+    uint32_t hash = adler32(json_data);
+    std::array<uint8_t, 4> hash_bytes = {
+        uint8_t((hash >> 24) & 0xFF),
+        uint8_t((hash >> 16) & 0xFF),
+        uint8_t((hash >>  8) & 0xFF),
+        uint8_t((hash      ) & 0xFF)
+    };
+    std::string expected_hash_string(reinterpret_cast<const char*>(hash_bytes.data()), hash_bytes.size());
+    EXPECT_EQ(hash_content, expected_hash_string);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, writeJsonData__error_handling){
+    prepare_enviromnnt();
+    /* Test writing to a non-writable directory */
+    system(("rm -rf " + kvs_prefix + ".json").c_str());
+    system(("rm -rf " + kvs_prefix + ".hash").c_str());
+    std::string unwritable_dir = "/root/unwritable_dir";
+    auto result = writeJsonData(unwritable_dir + "/" + process_name + "/kvs_"+std::to_string(instance), kvs_json);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::PhysicalStorageFailure);
+
+    
+    /* Test writing to a non-writable hash file */
+    std::ofstream out_hash(kvs_prefix + ".hash");
+    out_hash << "data";
+    out_hash.close();
+    std::filesystem::permissions(kvs_prefix + ".hash", std::filesystem::perms::owner_read, std::filesystem::perm_options::replace);
+    result = writeJsonData(filename_prefix, kvs_json);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::PhysicalStorageFailure);
+
+    /* Test writing to a non-writable kvs file */
+    std::ofstream out_json(kvs_prefix + ".json");
+    out_json << "data";
+    out_json.close();
+    std::filesystem::permissions(kvs_prefix + ".json", std::filesystem::perms::owner_read, std::filesystem::perm_options::replace);
+    result = writeJsonData(filename_prefix, kvs_json);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::PhysicalStorageFailure);
+
+    /* Test if path argument is missing parent path (will only occur if semantic errors will be done in flush() )*/
+    const std::string prefix = "no_parent_path";
+    result = writeJsonData(prefix, kvs_json);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), MyErrorCode::UnmappedError);
+
+    cleanup_environment();
+}
+
+
+TEST(kvs_TEST, snapshot_rotate){
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Create empty Test-Snapshot Files */
+    for (size_t i = 1; i < KVS_MAX_SNAPSHOTS; i++) {
+        std::ofstream(filename_prefix + "_" + std::to_string(i) + ".json") << "{}";
+        std::ofstream(filename_prefix + "_" + std::to_string(i) + ".hash") << "{}";
+        EXPECT_EQ(result.value().snapshot_count(), i);
+    }
+    ASSERT_FALSE(std::filesystem::exists(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".json"));
+    ASSERT_FALSE(std::filesystem::exists(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".hash"));
+    
+    /* Rotate Snapshots */
+    auto rotate_result = result.value().snapshot_rotate();
+    ASSERT_TRUE(rotate_result);
+    
+    /* Check if the snapshot ids are rotated and no ID 0 exists */
+    EXPECT_TRUE(std::filesystem::exists(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".json"));
+    EXPECT_TRUE(std::filesystem::exists(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".hash"));
+    EXPECT_FALSE(std::filesystem::exists(filename_prefix + "_" + std::to_string(0) + ".json"));
+    EXPECT_FALSE(std::filesystem::exists(filename_prefix + "_" + std::to_string(0) + ".hash"));
+
+    /* Check if no ID higher than KVS_MAX_SNAPSHOTS exists */
+    rotate_result = result.value().snapshot_rotate();
+    ASSERT_TRUE(rotate_result);
+    EXPECT_FALSE(std::filesystem::exists(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS + 1) + ".json"));
+    EXPECT_FALSE(std::filesystem::exists(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS + 1) + ".hash"));
+    
+    /* Mutex locked */
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    rotate_result = result.value().snapshot_rotate();
+    EXPECT_FALSE(rotate_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*rotate_result.error()), MyErrorCode::MutexLockFailed);
+    lock.unlock();
+
+    /* Snapshot (JSON) Renaming failed (Create directorys instead of json files to trigger rename error)*/
+    std::filesystem::remove(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".json");
+    std::filesystem::create_directory(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".json");
+    rotate_result = result.value().snapshot_rotate();
+    EXPECT_FALSE(rotate_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*rotate_result.error()), MyErrorCode::PhysicalStorageFailure);
+
+    
+    /* Snapshot (Hash) Renaming failed (Create directorys instead of hash files to trigger rename error)*/
+    cleanup_environment(); /* Clean Environment for next test */
+    prepare_enviromnnt();
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    /* Create empty Test-Snapshot Files */
+    for (size_t i = 1; i < KVS_MAX_SNAPSHOTS; i++) {
+        std::ofstream(filename_prefix + "_" + std::to_string(i) + ".json") << "{}";
+        std::ofstream(filename_prefix + "_" + std::to_string(i) + ".hash") << "{}";
+        EXPECT_EQ(result.value().snapshot_count(), i);
+    }
+
+    std::filesystem::remove(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".hash");
+    std::filesystem::create_directory(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS) + ".hash");
+    rotate_result = result.value().snapshot_rotate();
+    EXPECT_FALSE(rotate_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*rotate_result.error()), MyErrorCode::PhysicalStorageFailure);
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, flush){
+    prepare_enviromnnt();
+    /* Test flush with valid data */
+    system(("rm -rf " + kvs_prefix + ".json").c_str());
+    system(("rm -rf " + kvs_prefix + ".hash").c_str());
+
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+
+    std::string value = "value1";
+    result.value().kvs.insert({"key1", KvsValue(value)});
+    auto flush_result = result.value().flush();
+    ASSERT_TRUE(flush_result);
+
+    /* Check if writeJsonData was triggered and files were created*/
+    EXPECT_TRUE(std::filesystem::exists(kvs_prefix + ".json"));
+    EXPECT_TRUE(std::filesystem::exists(kvs_prefix + ".hash"));
+
+    EXPECT_FALSE(std::filesystem::exists(filename_prefix + "_1.json"));
+    EXPECT_FALSE(std::filesystem::exists(filename_prefix + "_1.hash"));
+
+    /* Check if snapshot_rotate was triggered on second flush --> one snapshot should be available afterwards */
+    flush_result = result.value().flush();
+    ASSERT_TRUE(flush_result);
+    EXPECT_TRUE(std::filesystem::exists(filename_prefix + "_1.json"));
+    EXPECT_TRUE(std::filesystem::exists(filename_prefix + "_1.hash"));
+
+    /* Mutex locked */
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    flush_result = result.value().flush();
+    EXPECT_FALSE(flush_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*flush_result.error()), MyErrorCode::MutexLockFailed);
+    lock.unlock();
+
+    /* Rotate Snapshot fails */
+    cleanup_environment(); /* Clean Environment for next test */
+    prepare_enviromnnt();
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    std::filesystem::permissions(data_dir, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace);
+    flush_result = result.value().flush();
+    EXPECT_FALSE(flush_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*flush_result.error()), MyErrorCode::PhysicalStorageFailure);
+
+    /* Test with kvsvalue_to_any error */
+    cleanup_environment(); /* Clean Environment for next test */
+    prepare_enviromnnt();
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    BrokenKvsValue invalid;
+    result.value().kvs.insert({"invalid_key", invalid});
+    auto flush_result_invalid = result.value().flush();
+    EXPECT_FALSE(flush_result_invalid);
+    EXPECT_EQ(flush_result_invalid.error(), MyErrorCode::InvalidValueType);
+
+
+    /* Test with writer.ToBuffer error*/
+    cleanup_environment(); /* Clean Environment for next test */
+    prepare_enviromnnt();
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    score::json::g_JsonWriterShouldFail = true; /* Force error in writer.ToBuffer */
+    auto flush_result_writer = result.value().flush();
+    EXPECT_FALSE(flush_result_writer);
+    EXPECT_EQ(flush_result_writer.error(), MyErrorCode::JsonGeneratorError);
+    score::json::g_JsonWriterShouldFail = false;
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, snapshot_count){
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    /* Create empty Test-Snapshot Files */
+    for (size_t i = 1; i <= KVS_MAX_SNAPSHOTS; i++) {
+        std::ofstream(filename_prefix + "_" + std::to_string(i) + ".json") << "{}";
+        EXPECT_EQ(result.value().snapshot_count(), i);
+    }
+    /* Test maximum capacity */
+    std::ofstream(filename_prefix + "_" + std::to_string(KVS_MAX_SNAPSHOTS + 1) + ".json") << "{}";
+    EXPECT_EQ(result.value().snapshot_count(), KVS_MAX_SNAPSHOTS);
+    
+    result.value().flush_on_exit = false;
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, snapshot_restore){
+    prepare_enviromnnt();
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    
+    /* Restore Snapshot ID 0 -> Current KVS*/
+    auto restore_result = result.value().snapshot_restore(0);
+    ASSERT_FALSE(restore_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*restore_result.error()), MyErrorCode::InvalidSnapshotId);
+
+    /* Restore Snapshot ID higher than snapshot_count (e.g. KVS_MAX_SNAPSHOTS +1) */
+    restore_result = result.value().snapshot_restore(KVS_MAX_SNAPSHOTS + 1);
+    ASSERT_FALSE(restore_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*restore_result.error()), MyErrorCode::InvalidSnapshotId);
+
+    /* Mutex locked */
+    std::unique_lock<std::mutex> lock(result.value().kvs_mutex);
+    restore_result = result.value().snapshot_restore(1);
+    EXPECT_FALSE(restore_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*restore_result.error()), MyErrorCode::MutexLockFailed);
+    lock.unlock();
+
+    /* Successfull */
+    /* Create empty Test-Snapshot Files -> Data after restoring should be the data listed below */
+    EXPECT_FALSE(result.value().kvs.empty());
+
+    const std::string json_data = R"({
+        "key1": "value1",
+        "key2": 42,
+        "key3": true,
+        "key4": null
+    })";
+
+    EXPECT_FALSE(result.value().kvs.count("key1"));
+    EXPECT_TRUE(result.value().kvs.count("kvs"));
+
+    std::ofstream out(filename_prefix + "_1.json", std::ios::binary);
+    out.write(json_data.data(), json_data.size());
+    out.close();
+    uint32_t hash = adler32(json_data);
+    std::array<uint8_t, 4> hash_bytes = {
+        uint8_t((hash >> 24) & 0xFF),
+        uint8_t((hash >> 16) & 0xFF),
+        uint8_t((hash >>  8) & 0xFF),
+        uint8_t((hash      ) & 0xFF)
+    };
+    std::ofstream hash_out(filename_prefix + "_1.hash", std::ios::binary);
+    hash_out.write(reinterpret_cast<const char*>(hash_bytes.data()), hash_bytes.size());
+    hash_out.close();
+    restore_result = result.value().snapshot_restore(1);
+    ASSERT_TRUE(restore_result);
+
+    /* open_json fails (e.g. Validation -> e.g. invalid hash) */
+    cleanup_environment(); /* Clean Environment for next test */
+    prepare_enviromnnt();
+    result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = false;
+    std::ofstream(filename_prefix + "_1.json") << json_data;
+    std::ofstream(filename_prefix + "_1.hash") << "invalid_hash"; /* Invalid Hash */
+    restore_result = result.value().snapshot_restore(1);
+    EXPECT_FALSE(restore_result);
+    EXPECT_EQ(static_cast<MyErrorCode>(*restore_result.error()), MyErrorCode::ValidationFailed); /* passed by open_json*/
+
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, snapshot_max_count){
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result.value().snapshot_max_count(), KVS_MAX_SNAPSHOTS);
+    
+    result.value().flush_on_exit = false;
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, get_filename){
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result.value().get_kvs_filename(3), filename_prefix + "_3.json");
+    EXPECT_EQ(result.value().get_kvs_hash_filename(4), filename_prefix + "_4.hash");
+    
+    result.value().flush_on_exit = false;
+    cleanup_environment();
+}
+
+TEST(kvs_TEST, kvs_destructor) {
+    /* Test if destructor works without errors */
+    prepare_enviromnnt();
+    {
+    auto result = Kvs::open(std::string(process_name), instance_id, OpenNeedDefaults::Optional, OpenNeedKvs::Optional);
+    ASSERT_TRUE(result);
+    result.value().flush_on_exit = true;
+    }
+    /* Since flush and snapshot is already tested, we let flush() be called by the destructor and check if the snapshot files (ID=1) are created */
+    EXPECT_TRUE(std::filesystem::exists(filename_prefix + "_1.json"));
+
+    cleanup_environment();
+}
+
