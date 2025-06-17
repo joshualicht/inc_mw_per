@@ -18,11 +18,15 @@ cc_library(
 cc_test(
     name = "test-kvs",
     srcs = [
-        "tests/stubs/json_writer_override.cpp",
         "tests/test-kvs.cpp",
         "src/kvs.cpp",
         "inc/internal/kvs_helper.h",
-        "inc/kvs.hpp"
+        "inc/kvs.hpp",
+        "tests/stubs/score/json/json_writer.h",
+        "tests/stubs/score/json/json_parser.h",
+        "tests/stubs/score/json/internal/model/any.h",
+        "tests/stubs/score/json/internal/model/error.h",
+
     ],
     includes = [
         "inc",
@@ -30,9 +34,8 @@ cc_test(
     ],
     deps = [
         "@googletest//:gtest_main",
+        "@score-baselibs//score/memory:string_comparison_adaptor",
         "@score-baselibs//score/filesystem:filesystem",
-        "@score-baselibs//score/json:interface",
-        "@score-baselibs//score/json:json_parser",
         "@score-baselibs//score/result:result",
     ],
 )

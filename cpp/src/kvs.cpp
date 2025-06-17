@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
- #include "kvs.hpp"
+#include "kvs.hpp"
 #include "internal/kvs_helper.h"
 #include <iostream>
 #include <fstream>
@@ -184,15 +184,15 @@ score::Result<score::json::Any> kvsvalue_to_any(const KvsValue& kv) {
         case KvsValue::Type::Object: {
             bool error = false;
             score::json::Object obj;
-            for (auto& [k, v] : std::get<KvsValue::Object>(kv.getValue())) {
-                auto conv = kvsvalue_to_any(v);
+            for (auto& [key, value] : std::get<KvsValue::Object>(kv.getValue())) {
+                auto conv = kvsvalue_to_any(value);
                 if (!conv) {
                     result = score::MakeUnexpected(MyErrorCode::InvalidValueType);
                     error = true;
                     break;
                 }else{
                     obj.emplace(
-                    score::memory::StringComparisonAdaptor(k),
+                    key,
                     std::move(conv.value()));
                 }
             }
@@ -415,7 +415,7 @@ score::Result<std::unordered_map<std::string, KvsValue>> parse_json_data(const s
     return result;
 }
 
-/* Open and read JSON File */ 
+/* Open and read JSON File */
 score::Result<std::unordered_map<string, KvsValue>> open_json(const string& prefix, OpenJsonNeedFile need_file)
 {   
     string json_file = prefix + ".json";
@@ -731,15 +731,15 @@ score::ResultBlank Kvs::flush() {
     {
         std::unique_lock<std::mutex> lock(kvs_mutex, std::try_to_lock);
         if (lock.owns_lock()) {
-            for (auto const& [key, kv] : kvs) {
-                auto conv = kvsvalue_to_any(kv);
+            for (auto const& [key, value] : kvs) {
+                auto conv = kvsvalue_to_any(value);
                 if (!conv) {
                     result = score::MakeUnexpected(static_cast<MyErrorCode>(*conv.error()));
                     error = true;
                     break;
                 }else{
                     root_obj.emplace(
-                        score::memory::StringComparisonAdaptor(key),
+                        key,
                         std::move(conv.value()) /*emplace in map uses move operator*/
                     );
                 }
