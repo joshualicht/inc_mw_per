@@ -11,18 +11,17 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-#include <gtest/gtest.h>
-#include <cstdlib>
 #include <cstdio>
-#include <unistd.h>
-#include <fstream>
-#include <string>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <gtest/gtest.h>
+#include <string>
+#include <unistd.h>
 
 /* Change Private Members and final to public to allow access to member variables and derive from kvsvalue in unittests*/
 #define private public
 #define final 
-#include "score/json/internal/model/any.h"
 #include "kvs.hpp"
 #undef private
 #undef final

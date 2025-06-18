@@ -51,13 +51,13 @@ bazel_dep(name = "buildifier_prebuilt", version = "7.3.1")
 #bazel_dep on module 'rules_boost' has no version -> override needed
 archive_override(
     module_name = "rules_boost",
-    urls = ["https://github.com/nelhage/rules_boost/archive/refs/heads/master.tar.gz"],
     strip_prefix = "rules_boost-master",
+    urls = ["https://github.com/nelhage/rules_boost/archive/refs/heads/master.tar.gz"],
 )
 
 bazel_dep(name = "score-baselibs", version = "0.0.0")
 git_override(
     module_name = "score-baselibs",
-    remote = "git@github.com:eclipse-score/baselibs.git",
     commit = "f0a394a602986ddf7abac6a238b9d44535a4b597",
+    remote = "git@github.com:eclipse-score/baselibs.git",
 )

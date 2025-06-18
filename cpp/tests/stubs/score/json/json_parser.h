@@ -37,7 +37,7 @@ class JsonParser
     /// \brief Parses the underlying buffer and creates a tree of JSON data
     /// \param buffer The string_view that shall be parsed
     /// \return root to the tree of JSON data, error on error
-    score::Result<Any> FromBuffer(const std::string_view buffer){
+    score::Result<Any> FromBuffer(const std::string_view buffer){ // std::string_view is used instead of score ::string_view for easy std::string conversion (unittests only) 
         if (g_JsonParserShouldFail) {
             return score::MakeUnexpected(Error::kInvalidFilePath);
         }else{
