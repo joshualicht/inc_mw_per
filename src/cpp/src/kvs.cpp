@@ -302,6 +302,7 @@ KvsBuilder::KvsBuilder(std::string&& process_name, const InstanceId& instance_id
     , need_defaults(false)
     , need_kvs(false)
     , process_name(std::move(process_name))
+    , single_threaded(false)
 {}
 
 KvsBuilder& KvsBuilder::need_defaults_flag(bool flag) {
@@ -314,12 +315,18 @@ KvsBuilder& KvsBuilder::need_kvs_flag(bool flag) {
     return *this;
 }
 
+KvsBuilder& KvsBuilder::single_threaded_flag(bool flag) {
+    single_threaded = flag;
+    return *this;
+}
+
 score::Result<Kvs> KvsBuilder::build() const {
     auto result = Kvs::open(
         std::move(process_name),
         instance_id,
         need_defaults ? OpenNeedDefaults::Required : OpenNeedDefaults::Optional,
-        need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional
+        need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional,
+        single_threaded ? true : false
     );
     return result;
 }
@@ -481,7 +488,7 @@ score::Result<std::unordered_map<string, KvsValue>> open_json(const string& pref
 
 /* Open KVS Instance */
 score::Result<Kvs> Kvs::open(const string&& process_name, const InstanceId& instance_id,OpenNeedDefaults need_defaults,
-    OpenNeedKvs need_kvs)
+    OpenNeedKvs need_kvs, bool single_threaded)
 {
     const string data_folder = "./data_folder/"; /*TODO Specify Data Folder here*/
     const string dir = data_folder + process_name + "/";
@@ -513,6 +520,7 @@ score::Result<Kvs> Kvs::open(const string&& process_name, const InstanceId& inst
             kvs.default_values = std::move(default_res.value());
             kvs.filename_prefix = filename_prefix;
             kvs.flush_on_exit.store(true, std::memory_order_relaxed);
+            kvs.single_threaded = single_threaded;
             result = std::move(kvs);
         }
     }
@@ -578,9 +586,17 @@ score::Result<bool> Kvs::key_exists(const string_view key) {
 
 /* Retrieve the value associated with a key*/
 score::Result<KvsValue> Kvs::get_value(const std::string_view key) {
+    bool error = false;
     score::Result<KvsValue> result = score::MakeUnexpected(MyErrorCode::UnmappedError);
-    std::unique_lock<std::mutex> lock_kvs(kvs_mutex, std::try_to_lock);
-    if (lock_kvs.owns_lock()){
+    std::unique_lock<std::mutex> lock_kvs;
+    if(!single_threaded){
+        lock_kvs = std::unique_lock<std::mutex>(kvs_mutex, std::try_to_lock);
+        if(!lock_kvs.owns_lock()){
+            result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
+            error = true;
+        }
+    }
+    if (!error){
         auto search_kvs = kvs.find(std::string(key));
         if (search_kvs != kvs.end()) {
             result = search_kvs->second;
@@ -592,9 +608,6 @@ score::Result<KvsValue> Kvs::get_value(const std::string_view key) {
                 result = score::MakeUnexpected(MyErrorCode::KeyNotFound);
             }
         }
-    }
-    else{
-        result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
     }
 
     return result;

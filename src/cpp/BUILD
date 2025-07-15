@@ -38,3 +38,10 @@ cc_library(
         "@score-baselibs//score/result:result",
     ],
 )
+
+cc_binary(
+    name = "benchmark",
+    srcs = ["benchmark.cpp"],
+    deps = ["@google_benchmark//:benchmark",
+            ":kvs_cpp"],
+)

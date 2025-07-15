@@ -326,7 +326,7 @@ class Kvs final {
          * - ErrorCode::ValidationFailed: Validation of the KVS data failed.
          * - ErrorCode::ResourceBusy: The KVS resource is currently in use.
          */
-        static score::Result<Kvs> open(const std::string&& process_name, const InstanceId& id, OpenNeedDefaults need_defaults, OpenNeedKvs need_kvs);
+        static score::Result<Kvs> open(const std::string&& process_name, const InstanceId& id, OpenNeedDefaults need_defaults, OpenNeedKvs need_kvs, bool single_threaded);
 
         /**
          * @brief Sets whether the key-value store should flush its contents to
@@ -539,6 +539,9 @@ class Kvs final {
     
         /* Flush on exit flag for written Keys */
         std::atomic<bool> flush_on_exit;
+
+        
+        bool single_threaded;
    
 };
 
@@ -570,6 +573,13 @@ public:
     KvsBuilder& need_kvs_flag(bool flag);
 
     /**
+     * @brief Specify whether the KVS is used in a multi-threaded context.
+     * @param flag True if the KVS is used in a multi-threaded context; false otherwise. True is default.
+     * @return Reference to this builder (for chaining).
+     */
+    KvsBuilder& single_threaded_flag(bool flag);
+
+    /**
      * @brief Builds and opens the Kvs instance with the configured options.
      *
      * Internally calls Kvs::open() with the selected flags and directory.
@@ -583,6 +593,7 @@ private:
     bool                               need_defaults; ///< Whether default values are required
     bool                               need_kvs;      ///< Whether an existing KVS is required
     std::string                        process_name;  ///< Process name for the KVS files
+    bool                               single_threaded; ///< Whether the KVS is used in a multi-threaded context
 };
 
 #endif /* SCORE_LIB_KVS_KVS_HPP */
