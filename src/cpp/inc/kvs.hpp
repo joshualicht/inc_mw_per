@@ -378,6 +378,11 @@ class Kvs final {
          *         if the operation fails.
          */
         score::Result<KvsValue> get_value(const std::string_view key);
+        score::Result<KvsValue> get_value_s(const std::string_view key);
+        score::Result<KvsValue> get_value_if(const std::string_view key);
+        inline score::Result<KvsValue> get_value_ptr(const std::string_view key){
+            return (this->*get_impl_)(key);
+        }
 
 
         /**
@@ -542,6 +547,12 @@ class Kvs final {
 
         
         bool single_threaded;
+        score::Result<KvsValue> lookup(const std::string_view key);
+        score::Result<KvsValue> get_value_locked(const std::string_view key);
+        score::Result<KvsValue> get_value_unlocked(const std::string_view key);
+        using GetFn = score::Result<KvsValue>(Kvs::*)(std::string_view);
+        GetFn get_impl_ = &Kvs::get_value_unlocked;
+
    
 };
 
