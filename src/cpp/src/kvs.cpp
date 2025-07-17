@@ -343,12 +343,6 @@ Kvs::Kvs()
     : flush_on_exit(false)
 {
     
-    if (single_threaded){
-    get_impl_ = &Kvs::get_value_unlocked;
-    } else{
-        get_impl_ = &Kvs::get_value_locked;
-    }
-
 }
 
 Kvs::Kvs(Kvs&& other) noexcept
@@ -361,6 +355,8 @@ Kvs::Kvs(Kvs&& other) noexcept
     }
     
     default_values = std::move(other.default_values);
+    single_threaded = other.single_threaded;
+    get_impl_ = other.get_impl_;
     
     /* Disable flush in source to avoid double flush on destruction */
     other.flush_on_exit.store(false, std::memory_order_relaxed);
@@ -380,6 +376,8 @@ Kvs& Kvs::operator=(Kvs&& other) noexcept
         bool flag = other.flush_on_exit.load(std::memory_order_relaxed);
         flush_on_exit.store(flag, std::memory_order_relaxed);
         other.flush_on_exit.store(false, std::memory_order_relaxed);
+        single_threaded = other.single_threaded;
+        get_impl_ = other.get_impl_;
 
         {
             std::lock_guard<std::mutex> lock_other(other.kvs_mutex);
@@ -528,11 +526,19 @@ score::Result<Kvs> Kvs::open(const string&& process_name, const InstanceId& inst
             kvs.filename_prefix = filename_prefix;
             kvs.flush_on_exit.store(true, std::memory_order_relaxed);
             kvs.single_threaded = single_threaded;
+
+            if(single_threaded){
+                kvs.get_impl_ = &Kvs::get_value_unlocked;
+            } else{
+                kvs.get_impl_ = &Kvs::get_value_locked;
+            }
+            
             result = std::move(kvs);
         }
     }
 
     return result;
+    
 }
 
 /* Set flush on exit flag*/
@@ -668,10 +674,9 @@ score::Result<KvsValue> Kvs::get_value_if(const std::string_view key) {
 }
 
 
-score::Result<KvsValue> Kvs::lookup(const std::string_view key) {
+inline score::Result<KvsValue> Kvs::get_value_unlocked(const std::string_view key) {
 
     score::Result<KvsValue> result = score::MakeUnexpected(MyErrorCode::UnmappedError);
-
     auto search_kvs = kvs.find(std::string(key));
     if (search_kvs != kvs.end()) {
         result = search_kvs->second;
@@ -693,46 +698,16 @@ score::Result<KvsValue> Kvs::get_value_locked(std::string_view key) {
     if (!lock.owns_lock()){
         result = score::MakeUnexpected(MyErrorCode::MutexLockFailed);
     }else{
-        result = lookup(key);
+        result = get_value_unlocked(key);
     }
 
     return result;
 }
 
-score::Result<KvsValue> Kvs::get_value_unlocked(std::string_view key) {
-    score::Result<KvsValue> result = score::MakeUnexpected(MyErrorCode::UnmappedError);
-    result = lookup(key);
-    return result;
-}
 
 // score::Result<KvsValue> Kvs::get_value_ptr(const std::string_view key){
 //     return (this->*get_impl_)(key);
 // }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

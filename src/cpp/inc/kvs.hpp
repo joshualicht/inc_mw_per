@@ -525,6 +525,7 @@ class Kvs final {
          */
         std::string get_kvs_hash_filename(const SnapshotId& snapshot_id) const;
 
+
     private:
         /* Private constructor to prevent direct instantiation */
         Kvs();
@@ -546,13 +547,11 @@ class Kvs final {
         std::atomic<bool> flush_on_exit;
 
         
-        bool single_threaded;
-        score::Result<KvsValue> lookup(const std::string_view key);
         score::Result<KvsValue> get_value_locked(const std::string_view key);
-        score::Result<KvsValue> get_value_unlocked(const std::string_view key);
+        inline score::Result<KvsValue> get_value_unlocked(const std::string_view key);
         using GetFn = score::Result<KvsValue>(Kvs::*)(std::string_view);
-        GetFn get_impl_ = &Kvs::get_value_unlocked;
-
+        GetFn get_impl_ = nullptr;  ///< Pointer to the get function implementation, can be locked or unlocked
+        bool single_threaded;
    
 };
 

@@ -19,7 +19,7 @@ module(
 # MODULE.bazel
 bazel_dep(
     name = "google_benchmark",
-    version = "1.9.4",   # nimm die jüngste Version aus dem BCR
+    version = "1.9.4",
 )
 
 

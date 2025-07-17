@@ -126,6 +126,7 @@ static void BM_KVS_GetValue_ptr(benchmark::State& state) { //get_value with stan
     Kvs kvs = std::move(open_res.value());
     kvs.set_value("test_key", KvsValue(42.0));
 
+    
     for (auto _ : state) {
         benchmark::DoNotOptimize(kvs.get_value_ptr("test_key"));
     }
