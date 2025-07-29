@@ -25,6 +25,8 @@
 #include "score/json/json_writer.h"
 #include "score/result/result.h"
 
+#include "internal/ikvs.hpp"
+
 #define KVS_MAX_SNAPSHOTS 3
 
 namespace score 
@@ -35,203 +37,6 @@ namespace pers
 {
 namespace kvs 
 {
-
-/* @brief */
-enum class MyErrorCode : score::result::ErrorCode {
-    /* Error that was not yet mapped*/
-    UnmappedError,
-
-    /* File not found*/
-    FileNotFound,
-
-    /* KVS file read error*/
-    KvsFileReadError,
-
-    /* KVS hash file read error*/
-    KvsHashFileReadError,
-
-    /* JSON parser error*/
-    JsonParserError,
-
-    /* JSON generator error*/
-    JsonGeneratorError,
-
-    /* Physical storage failure*/
-    PhysicalStorageFailure,
-
-    /* Integrity corrupted*/
-    IntegrityCorrupted,
-
-    /* Validation failed*/
-    ValidationFailed,
-
-    /* Encryption failed*/
-    EncryptionFailed,
-
-    /* Resource is busy*/
-    ResourceBusy,
-
-    /* Out of storage space*/
-    OutOfStorageSpace,
-
-    /* Quota exceeded*/
-    QuotaExceeded,
-
-    /* Authentication failed*/
-    AuthenticationFailed,
-
-    /* Key not found*/
-    KeyNotFound,
-    
-    /* Key default value not found*/
-    KeyDefaultNotFound,
-
-    /* Serialization failed*/
-    SerializationFailed,
-
-    /* Invalid snapshot ID*/
-    InvalidSnapshotId,
-
-    /* Conversion failed*/
-    ConversionFailed,
-
-    /* Mutex failed*/
-    MutexLockFailed,
-
-    /* Invalid value type*/
-    InvalidValueType,
-
-    /* Invalid argument*/
-    InvalidArgument
-};
-
-class MyErrorDomain final : public score::result::ErrorDomain
-{
-public:
-    std::string_view MessageFor(score::result::ErrorCode const& code) const noexcept override;
-};
-
-constexpr MyErrorDomain my_error_domain;
-score::result::Error MakeError(MyErrorCode code, std::string_view user_message = "") noexcept;
-
-
-struct InstanceId {
-    size_t id;
-    
-    /* Constructor to initialize 'id' */
-    /* Not explicit to allow implicit construction e.g. function(0) instead function(InstanceId(0)) */
-    InstanceId(size_t id) { this->id = id; }
-};
-
-struct SnapshotId {
-    size_t id;
-
-    /* Constructor to initialize 'id'*/
-    /* Not explicit to allow implicit construction e.g. function(0) instead function(SnapshotId(0)) */
-    SnapshotId(size_t id) { this->id = id; }
-};
-
-/* Need-Defaults flag*/
-enum class OpenNeedDefaults{
-    Optional = 0, /* Optional: Use an empty defaults Storage if not available*/
-    Required = 1 /* Required: Defaults must be available*/
-};
-
-/* Need-KVS flag*/
-enum class OpenNeedKvs {
-    Optional = 0, /* Optional: Use an empty KVS if no KVS is available*/
-    Required = 1 /* Required: KVS must be already exist*/
-};
-
-/* Need-File flag */
-enum class OpenJsonNeedFile {
-    Optional = 0, /* Optional: If the file doesn't exist, start with empty data */
-    Required = 1 /* Required: The file must already exist */
-};
-
-/* Define the KvsValue class*/
-/**
- * @class KvsValue
- * @brief Represents a flexible value type that can hold various data types, 
- *        including numbers, booleans, strings, null, arrays, and objects.
- * 
- * The KvsValue class provides a type-safe way to store and retrieve values of 
- * different types. It uses a std::variant to hold the underlying value and an 
- * enum to track the type of the value.
- * 
- * ## Supported Types:
- * - Number (double)
- * - Boolean (bool)
- * - String (std::string)
- * - Null (std::nullptr_t)
- * - Array (std::vector<KvsValue>)
- * - Object (std::unordered_map<std::string, KvsValue>)
- * 
- * ## Public Methods:
- * - `KvsValue(double number)`: Constructs a KvsValue holding a number.
- * - `KvsValue(bool boolean)`:
- * - Access the underlying value using `getValue()` and `std::get`.
- *
- * ## Example:
- * @code
- * KvsValue numberValue(42.0);
- * KvsValue stringValue("Hello, World!");
- * KvsValue arrayValue(KvsValue::Array{numberValue, stringValue});
- *
- * if (numberValue.getType() == KvsValue::Type::Number) {
- *     double number = std::get<double>(numberValue.getValue());
- * }
- * @endcode
- */
-
-class KvsValue final{
-public:
-    /* Define the possible types for KvsValue*/
-    using Array = std::vector<KvsValue>;
-    using Object = std::unordered_map<std::string, KvsValue>;
-
-    /* Enum to represent the type of the value*/
-    enum class Type {
-        i32,
-        u32,
-        i64,
-        u64,
-        f64,
-        Boolean,
-        String,
-        Null,
-        Array,
-        Object
-    };
-
-    /* Constructors for each type*/
-    explicit KvsValue(int32_t number) : value(number), type(Type::i32) {}
-    explicit KvsValue(uint32_t number) : value(number), type(Type::u32) {}
-    explicit KvsValue(int64_t number) : value(number), type(Type::i64) {}
-    explicit KvsValue(uint64_t number) : value(number), type(Type::u64) {}
-    explicit KvsValue(double number) : value(number), type(Type::f64) {}
-    explicit KvsValue(bool boolean) : value(boolean), type(Type::Boolean) {}
-    explicit KvsValue(const std::string& str) : value(str), type(Type::String) {}
-    explicit KvsValue(std::nullptr_t) : value(nullptr), type(Type::Null) {}
-    explicit KvsValue(const Array& array) : value(array), type(Type::Array) {}
-    explicit KvsValue(const Object& object) : value(object), type(Type::Object) {}
-
-    /* Get the type of the value*/
-    Type getType() const { return type; }
-
-    /* Access the underlying value (use std::get to retrieve the value)*/
-    const std::variant<int32_t, uint32_t, int64_t, uint64_t, double, bool, std::string, std::nullptr_t, Array, Object>& getValue() const {
-        return value;
-    }
-
-private:
-    /* The underlying value*/
-    std::variant<int32_t, uint32_t, int64_t, uint64_t, double, bool, std::string, std::nullptr_t, Array, Object> value;
-
-    /* The type of the value*/
-    Type type;
-};
-
 
 /**
  * @class Kvs
@@ -288,15 +93,15 @@ private:
  *                        .need_kvs_flag(true)
  *                        .build();
  *    if (!open_res) return 1;
- *    Kvs kvs = std::move(open_res.value());
+ *    std::unique_ptr<Kvs> kvs = std::move(open_res.value());
  *
  *    // Set and get a value
- *    kvs.set_value("pi", KvsValue(3.14));
- *    auto get_res = kvs.get_value("pi");
+ *    kvs->set_value("pi", KvsValue(3.14));
+ *    auto get_res = kvs->get_value("pi");
  *
  *    // Delete a key
- *    kvs.remove_key("pi");
- *    std::cout << "has pi? " << (kvs.key_exists("pi").value_or(false) ? "yes" : "no") << "\n";
+ *    kvs->remove_key("pi");
+ *    std::cout << "has pi? " << (kvs->key_exists("pi").value_or(false) ? "yes" : "no") << "\n";
  *
  *
  *    return 0;
@@ -304,7 +109,7 @@ private:
  * \endcode
 */
 
-class Kvs final {
+class Kvs final : public IKvs{
     public:
 
         ~Kvs();
@@ -316,36 +121,6 @@ class Kvs final {
         // Default move constructor and assignment operator
         Kvs(Kvs&& other) noexcept;
         Kvs& operator=(Kvs&& other) noexcept;
-
-        /**
-         * @brief Opens the key-value store with the specified instance ID and flags.
-         * 
-         * This function initializes and opens the key-value store (KVS) for a given instance ID. 
-         * It allows the caller to specify whether default values and an existing KVS are required 
-         * or optional during the opening process.
-         * 
-         * @param id The instance ID of the KVS. This uniquely identifies the KVS instance.
-         * @param need_defaults A flag of type OpenNeedDefaults indicating whether default values 
-         *                      are required or optional.
-         *                      - OpenNeedDefaults::Required: Default values must be available.
-         *                      - OpenNeedDefaults::Optional: Default values are optional.
-         * @param need_kvs A flag of type OpenNeedKvs indicating whether the KVS is required or optional.
-         *                 - OpenNeedKvs::Required: The KVS must already exist.
-         *                 - OpenNeedKvs::Optional: An empty KVS will be used if no KVS exists.
-         * @param dir The directory path where the KVS files are located. It is passed as an rvalue reference to avoid unnecessary copying.
-         *            Use "" or "." for the current directory.
-         * @return A Result object containing either:
-         *         - A Kvs object if the operation is successful.
-         *         - An ErrorCode if an error occurs during the operation.
-         * 
-         * Possible Error Codes:
-         * - ErrorCode::FileNotFound: The KVS file was not found.
-         * - ErrorCode::KvsFileReadError: An error occurred while reading the KVS file.
-         * - ErrorCode::IntegrityCorrupted: The KVS integrity is corrupted.
-         * - ErrorCode::ValidationFailed: Validation of the KVS data failed.
-         * - ErrorCode::ResourceBusy: The KVS resource is currently in use.
-         */
-        static score::Result<Kvs> open(const InstanceId& instance_id, OpenNeedDefaults need_defaults, OpenNeedKvs need_kvs, const std::string&& dir);
 
         /**
          * @brief Sets whether the key-value store should flush its contents to
@@ -546,8 +321,13 @@ class Kvs final {
         score::Result<score::filesystem::Path> get_hash_filename(const SnapshotId& snapshot_id) const;
 
     private:
+
+        friend class KvsBuilder;
         /* Private constructor to prevent direct instantiation */
         Kvs();
+
+        /* Opens KVS (Builder is for public usage) */
+        static score::Result<Kvs> open(const InstanceId& instance_id, OpenNeedDefaults need_defaults, OpenNeedKvs need_kvs, const std::string&& dir);
 
         /* Rotate Snapshots */
         score::ResultBlank snapshot_rotate();
@@ -582,7 +362,7 @@ class Kvs final {
  * @class KvsBuilder
  * @brief Builder for opening a KVS object.
  */
-class KvsBuilder final {
+class KvsBuilder final : public IKvsBuilder {
 public:
     /**
      * @brief Constructs a KvsBuilder for the given KVS instance.
@@ -618,9 +398,9 @@ public:
      *
      * Internally calls Kvs::open() with the selected flags and directory.
      *
-     * @return A score::Result<Kvs> containing the opened store or an ErrorCode.
+     * @return A score::Result<std::unique_ptr<IKvs>> containing the opened store or an ErrorCode.
      */
-    score::Result<Kvs> build();
+    score::Result<std::unique_ptr<IKvs>> build();
 
 private:
     InstanceId                         instance_id;   ///< ID of the KVS instance

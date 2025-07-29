@@ -443,21 +443,26 @@ KvsBuilder& KvsBuilder::dir(std::string&& dir_path) {
 }
 
 
-score::Result<Kvs> KvsBuilder::build() {
-    score::Result<Kvs> result = score::MakeUnexpected(MyErrorCode::UnmappedError);
+score::Result<std::unique_ptr<IKvs>> KvsBuilder::build() {
+    score::Result<std::unique_ptr<Kvs>> result = score::MakeUnexpected(MyErrorCode::UnmappedError);
 
     /* Use current directory if empty */
     if ("" == directory) {
         directory = "./";
     }
     
-    result = Kvs::open(
+    auto kvs_result = Kvs::open(
         instance_id,
         need_defaults ? OpenNeedDefaults::Required : OpenNeedDefaults::Optional,
         need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional,
         std::move(directory)
     );
-    
+
+    if (kvs_result) {
+        result = std::make_unique<Kvs>(std::move(kvs_result.value()));
+    } else {
+        result = score::MakeUnexpected(static_cast<MyErrorCode>(*kvs_result.error()));
+    }
     return result;
 }
 

@@ -16,6 +16,7 @@
 cc_library(
     name = "kvs_cpp",
     srcs = [
+        "inc/internal/ikvs.hpp",
         "inc/internal/kvs_helper.hpp",
         "src/kvs.cpp",
     ],
