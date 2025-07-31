@@ -45,24 +45,6 @@ KvsBuilder& KvsBuilder::dir(std::string&& dir_path) {
 }
 
 
-score::Result<Kvs> KvsBuilder::build() {
-    score::Result<Kvs> result = score::MakeUnexpected(ErrorCode::UnmappedError);
-
-    /* Use current directory if empty */
-    if ("" == directory) {
-        directory = "./";
-    }
-    
-    result = Kvs::open(
-        instance_id,
-        need_defaults ? OpenNeedDefaults::Required : OpenNeedDefaults::Optional,
-        need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional,
-        std::move(directory)
-    );
-    
-    return result;
-}
-
 } /* namespace kvs */
 } /* namespace pers */
 } /* namespace mw */

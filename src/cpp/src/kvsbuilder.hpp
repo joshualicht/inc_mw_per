@@ -93,13 +93,31 @@ public:
     KvsBuilder& dir(std::string&& dir_path);
 
     /**
-     * @brief Builds and opens the Kvs instance with the configured options.
+     * @brief Builds and opens the KvsType instance with the configured options.
      *
-     * Internally calls Kvs::open() with the selected flags and directory.
+     * Internally calls KvsType::open() with the selected flags and directory.
      *
-     * @return A score::Result<Kvs> containing the opened store or an ErrorCode.
+     * @return A score::Result<KvsType> containing the opened store or an ErrorCode.
      */
-    score::Result<Kvs> build();
+    template<typename KvsType>
+    score::Result<KvsType> build() {
+        score::Result<KvsType> result = score::MakeUnexpected(ErrorCode::UnmappedError);
+
+        /* Use current directory if empty */
+        if ("" == this->directory) {
+            this->directory = "./";
+        }
+
+        result = KvsType::open(
+            this->instance_id,
+            this->need_defaults ? OpenNeedDefaults::Required : OpenNeedDefaults::Optional,
+            this->need_kvs      ? OpenNeedKvs::Required      : OpenNeedKvs::Optional,
+            std::move(this->directory)
+        );
+        
+        return result;
+    }
+
 
 private:
     InstanceId                         instance_id;   ///< ID of the KVS instance

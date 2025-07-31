@@ -34,6 +34,7 @@ cc_library(
     ],
     hdrs = [
         "src/kvsbuilder.hpp",
+        "src/kvs.hpp",
     ],
     implementation_deps = [
         "//src/cpp/src/internal:kvs_helper",
@@ -41,10 +42,23 @@ cc_library(
     includes = ["src"],
     visibility = ["//:__pkg__"],
     deps = [
-        ":kvsvalue",
-        "//src/cpp/src/internal:error",
-        "@score-baselibs//score/filesystem:filesystem",
-        "@score-baselibs//score/json",
-        "@score-baselibs//score/result:result",
+        "//src/cpp/src/internal:ikvs",
+    ],
+)
+
+cc_library(
+    name = "mock",
+    srcs = [
+        "src/kvsmock.cpp",
+    ],
+    hdrs = [
+        "src/kvsmock.hpp",
+    ],
+    includes = ["src"],
+    visibility = ["//:__pkg__"],
+    deps = [
+        ":kvs_cpp",
+        "//src/cpp/src/internal:ikvs",
+        "@googletest//:gtest",
     ],
 )

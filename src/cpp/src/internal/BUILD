@@ -46,3 +46,22 @@ cc_library(
         "@score-baselibs//score/json",
     ],
 )
+
+cc_library(
+    name = "ikvs",
+    srcs = [
+        "ikvs.cpp",
+    ],
+    hdrs = [
+        "ikvs.hpp",
+    ],
+    visibility = [
+        "//src/cpp:__pkg__",
+    ],
+    deps = [
+        ":error",
+        "//src/cpp:kvsvalue",
+        "@score-baselibs//score/filesystem:filesystem",
+        "@score-baselibs//score/json",
+    ],
+)

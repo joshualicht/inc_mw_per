@@ -13,19 +13,7 @@
 #ifndef SCORE_LIB_KVS_KVS_HPP
 #define SCORE_LIB_KVS_KVS_HPP
 
-#include <atomic>
-#include <mutex>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include "internal/error.hpp"
-#include "kvsvalue.hpp"
-#include "score/filesystem/filesystem.h"
-#include "score/json/json_parser.h"
-#include "score/json/json_writer.h"
-#include "score/result/result.h"
+#include "internal/ikvs.hpp"
 
 #define KVS_MAX_SNAPSHOTS 3
 
@@ -37,40 +25,6 @@ namespace pers
 {
 namespace kvs 
 {
-
-struct InstanceId {
-    size_t id;
-    
-    /* Constructor to initialize 'id' */
-    /* Not explicit to allow implicit construction e.g. function(0) instead function(InstanceId(0)) */
-    InstanceId(size_t id) { this->id = id; }
-};
-
-struct SnapshotId {
-    size_t id;
-
-    /* Constructor to initialize 'id'*/
-    /* Not explicit to allow implicit construction e.g. function(0) instead function(SnapshotId(0)) */
-    SnapshotId(size_t id) { this->id = id; }
-};
-
-/* Need-Defaults flag*/
-enum class OpenNeedDefaults{
-    Optional = 0, /* Optional: Use an empty defaults Storage if not available*/
-    Required = 1 /* Required: Defaults must be available*/
-};
-
-/* Need-KVS flag*/
-enum class OpenNeedKvs {
-    Optional = 0, /* Optional: Use an empty KVS if no KVS is available*/
-    Required = 1 /* Required: KVS must be already exist*/
-};
-
-/* Need-File flag */
-enum class OpenJsonNeedFile {
-    Optional = 0, /* Optional: If the file doesn't exist, start with empty data */
-    Required = 1 /* Required: The file must already exist */
-};
 
 /**
  * @class Kvs
@@ -136,6 +90,8 @@ class Kvs final {
          * This function initializes and opens the key-value store (KVS) for a given instance ID. 
          * It allows the caller to specify whether default values and an existing KVS are required 
          * or optional during the opening process.
+         * 
+         * IMPORTANT: The KVSBuilder should be used to create a KVS object.
          * 
          * @param id The instance ID of the KVS. This uniquely identifies the KVS instance.
          * @param need_defaults A flag of type OpenNeedDefaults indicating whether default values 
